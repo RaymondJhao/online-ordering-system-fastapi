@@ -11,6 +11,6 @@ class Config:
     JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "dev-jwt-secret-key")
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL",
-        "mysql+pymysql://order_user:order_password_123@localhost:3306/online_ordering_system",
+        "sqlite:///dev_fallback.db",
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
