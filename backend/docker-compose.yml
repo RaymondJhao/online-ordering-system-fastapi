@@ -15,5 +15,12 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
 
+  redis:
+    image: redis:alpine
+    container_name: food_ordering_redis
+    restart: always
+    ports:
+      - "6379:6379"
+
 volumes:
   mysql_data:
