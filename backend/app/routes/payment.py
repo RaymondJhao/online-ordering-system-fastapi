@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 
 from ..extensions import db, limiter
-from ..models import Order, OrderStatus, PaymentStatus
+from ..models import Order, OrderStatus, PaymentMethod, PaymentStatus
 from ..utils.ecpay import generate_check_mac_value
 
 payment_bp = Blueprint("payment", __name__, url_prefix="/api/payment")
@@ -37,6 +37,8 @@ def checkout(order_id):
         return jsonify({"message": "此訂單目前狀態無法建立付款"}), 400
     if order.payment_status != PaymentStatus.UNPAID:
         return jsonify({"message": "此訂單已完成付款或退款，無法重複建立付款"}), 400
+    if order.payment_method != PaymentMethod.ONLINE:
+        return jsonify({"message": "此訂單為現金付款，無法建立線上刷卡"}), 400
 
     merchant_trade_no = f"ORD{order.id}{int(time.time())}"
 

@@ -27,6 +27,11 @@ class PaymentStatus(enum.Enum):
     REFUNDED = "REFUNDED"
 
 
+class PaymentMethod(enum.Enum):
+    CASH = "CASH"
+    ONLINE = "ONLINE"
+
+
 class Customer(db.Model):
     __tablename__ = "customers"
 
@@ -116,6 +121,11 @@ class Order(db.Model):
     payment_status = db.Column(
         db.Enum(PaymentStatus, values_callable=lambda e: [member.value for member in e]),
         default=PaymentStatus.UNPAID,
+        nullable=False,
+    )
+    payment_method = db.Column(
+        db.Enum(PaymentMethod, values_callable=lambda e: [member.value for member in e]),
+        default=PaymentMethod.ONLINE,
         nullable=False,
     )
     reject_reason = db.Column(db.String(255), nullable=True)

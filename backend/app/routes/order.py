@@ -2,11 +2,12 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 
 from ..extensions import db, limiter
-from ..models import MenuItem, Merchant, Order, OrderItem, OrderStatus
+from ..models import MenuItem, Merchant, Order, OrderItem, OrderStatus, PaymentMethod
 
 order_bp = Blueprint("order", __name__, url_prefix="/api/orders")
 
 VALID_STATUSES = {status.value for status in OrderStatus}
+VALID_PAYMENT_METHODS = {method.value for method in PaymentMethod}
 
 # 嚴格狀態轉移表：key 為目前狀態，value 為允許轉入的下一個狀態集合。
 # 不在此表中的轉移一律視為非法（含「轉回自己」與任何跳躍式轉移）。
@@ -29,6 +30,7 @@ def serialize_order(order):
         "merchant_id": order.merchant_id,
         "status": order.status.value,
         "payment_status": order.payment_status.value,
+        "payment_method": order.payment_method.value,
         "reject_reason": order.reject_reason,
         "total_price": float(order.total_price),
         "pickup_time": order.pickup_time.isoformat() if order.pickup_time else None,
@@ -73,6 +75,15 @@ def create_order():
     if Merchant.query.get(merchant_id) is None:
         return jsonify({"message": "商家不存在"}), 404
 
+    payment_method = data.get("payment_method", PaymentMethod.ONLINE.value)
+    if payment_method not in VALID_PAYMENT_METHODS:
+        return (
+            jsonify(
+                {"message": f"payment_method 必須為以下其中之一：{sorted(VALID_PAYMENT_METHODS)}"}
+            ),
+            400,
+        )
+
     # 驗證每個品項的格式與數量，並收集要查詢的 menu_item_id
     parsed_items = []
     for raw_item in items:
@@ -108,6 +119,7 @@ def create_order():
             merchant_id=merchant_id,
             total_price=0,
             status=OrderStatus.PENDING,
+            payment_method=PaymentMethod(payment_method),
             table_number=data.get("table_number"),
         )
 
