@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 
 function Auth() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [mode, setMode] = useState('login')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
@@ -25,7 +26,7 @@ function Auth() {
       password,
     })
     localStorage.setItem('token', res.data.access_token)
-    navigate('/')
+    navigate(location.state?.from ?? '/', { replace: true })
   }
 
   const handleRegister = async () => {

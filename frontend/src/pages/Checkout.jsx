@@ -28,7 +28,7 @@ function Checkout() {
 
   useEffect(() => {
     if (!localStorage.getItem('token')) {
-      navigate('/auth')
+      navigate('/auth', { state: { from: '/checkout' } })
     }
   }, [navigate])
 
@@ -36,7 +36,7 @@ function Checkout() {
     setError(null)
 
     if (!localStorage.getItem('token')) {
-      navigate('/auth')
+      navigate('/auth', { state: { from: '/checkout' } })
       return
     }
     if (cart.length === 0) {

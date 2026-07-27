@@ -21,7 +21,7 @@ function CustomerMenu() {
   const goToCheckout = () => {
     setIsCartOpen(false)
     if (!localStorage.getItem('token')) {
-      navigate('/auth')
+      navigate('/auth', { state: { from: '/checkout' } })
       return
     }
     navigate('/checkout')
