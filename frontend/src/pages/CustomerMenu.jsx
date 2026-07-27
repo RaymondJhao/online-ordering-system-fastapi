@@ -11,6 +11,8 @@ function CustomerMenu() {
   const [isCartOpen, setIsCartOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [showAuthAlert, setShowAuthAlert] = useState(false)
+  const [countdown, setCountdown] = useState(5)
   const isLoggedIn = !!localStorage.getItem('token')
 
   const handleLogout = () => {
@@ -21,11 +23,29 @@ function CustomerMenu() {
   const goToCheckout = () => {
     setIsCartOpen(false)
     if (!localStorage.getItem('token')) {
-      navigate('/auth', { state: { from: '/checkout' } })
+      setCountdown(5)
+      setShowAuthAlert(true)
       return
     }
     navigate('/checkout')
   }
+
+  useEffect(() => {
+    if (!showAuthAlert) return undefined
+
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer)
+          navigate('/auth', { state: { from: '/checkout' } })
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [showAuthAlert, navigate])
 
   useEffect(() => {
     axios
@@ -198,6 +218,18 @@ function CustomerMenu() {
                 前往結帳
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showAuthAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl">
+            <p className="text-lg font-bold text-gray-900">需要會員才能結帳</p>
+            <p className="mt-2 text-sm text-gray-500">
+              <span className="font-semibold text-orange-500">{countdown}</span>{' '}
+              秒後將自動跳轉至登入頁面...
+            </p>
           </div>
         </div>
       )}
