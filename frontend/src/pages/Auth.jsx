@@ -1,0 +1,154 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import axios from 'axios'
+
+function Auth() {
+  const navigate = useNavigate()
+  const [mode, setMode] = useState('login')
+  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState(null)
+  const [successMessage, setSuccessMessage] = useState(null)
+
+  const switchMode = (nextMode) => {
+    setMode(nextMode)
+    setError(null)
+    setSuccessMessage(null)
+  }
+
+  const handleLogin = async () => {
+    const res = await axios.post('/api/auth/login', {
+      role: 'customer',
+      email,
+      password,
+    })
+    localStorage.setItem('token', res.data.access_token)
+    navigate('/')
+  }
+
+  const handleRegister = async () => {
+    await axios.post('/api/auth/register', {
+      role: 'customer',
+      name: username,
+      email,
+      password,
+    })
+    setSuccessMessage('註冊成功，請登入')
+    switchMode('login')
+    setPassword('')
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setError(null)
+    setSuccessMessage(null)
+    setIsSubmitting(true)
+
+    try {
+      if (mode === 'login') {
+        await handleLogin()
+      } else {
+        await handleRegister()
+      }
+    } catch (err) {
+      setError(err.response?.data?.message ?? '發生錯誤，請稍後再試')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-md">
+        <div className="mb-6 flex rounded-full bg-gray-100 p-1">
+          <button
+            type="button"
+            onClick={() => switchMode('login')}
+            className={`flex-1 rounded-full py-2 text-sm font-medium transition-colors ${
+              mode === 'login'
+                ? 'bg-orange-500 text-white shadow'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            登入
+          </button>
+          <button
+            type="button"
+            onClick={() => switchMode('register')}
+            className={`flex-1 rounded-full py-2 text-sm font-medium transition-colors ${
+              mode === 'register'
+                ? 'bg-orange-500 text-white shadow'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            註冊
+          </button>
+        </div>
+
+        <h1 className="mb-4 text-center text-xl font-bold text-gray-900">
+          {mode === 'login' ? '會員登入' : '會員註冊'}
+        </h1>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {mode === 'register' && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                使用者名稱
+              </label>
+              <input
+                type="text"
+                required
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              電子信箱
+            </label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              密碼
+            </label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+            />
+          </div>
+
+          {error && <p className="text-sm text-red-500">{error}</p>}
+          {successMessage && (
+            <p className="text-sm text-green-600">{successMessage}</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full rounded-full bg-orange-500 py-2.5 font-medium text-white shadow hover:bg-orange-600 transition-colors disabled:cursor-not-allowed disabled:bg-gray-300"
+          >
+            {isSubmitting ? '處理中...' : mode === 'login' ? '登入' : '註冊'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+export default Auth

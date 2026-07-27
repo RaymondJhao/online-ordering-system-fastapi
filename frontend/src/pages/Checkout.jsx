@@ -29,7 +29,7 @@ function Checkout() {
   const handleConfirmPayment = async () => {
     setError(null)
 
-    const token = localStorage.getItem('access_token')
+    const token = localStorage.getItem('token')
     if (!token) {
       setError('請先登入後再進行付款')
       return

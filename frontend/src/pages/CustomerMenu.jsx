@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { ShoppingCart, Plus, Minus, X } from 'lucide-react'
+import { ShoppingCart, Plus, Minus, X, User } from 'lucide-react'
 import { useCart } from '../context/CartContext'
 
 function CustomerMenu() {
@@ -34,19 +34,29 @@ function CustomerMenu() {
           <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">
             美味點餐
           </h1>
-          <button
-            type="button"
-            onClick={() => setIsCartOpen(true)}
-            className="relative flex items-center gap-2 rounded-full bg-orange-500 px-4 py-2 text-white shadow hover:bg-orange-600 transition-colors"
-          >
-            <ShoppingCart size={20} />
-            <span className="hidden sm:inline">購物車</span>
-            {totalCount > 0 && (
-              <span className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white">
-                {totalCount}
-              </span>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate('/auth')}
+              className="flex items-center gap-2 rounded-full border border-gray-300 px-4 py-2 text-gray-600 hover:bg-gray-100 transition-colors"
+            >
+              <User size={20} />
+              <span className="hidden sm:inline">登入 / 註冊</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCartOpen(true)}
+              className="relative flex items-center gap-2 rounded-full bg-orange-500 px-4 py-2 text-white shadow hover:bg-orange-600 transition-colors"
+            >
+              <ShoppingCart size={20} />
+              <span className="hidden sm:inline">購物車</span>
+              {totalCount > 0 && (
+                <span className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white">
+                  {totalCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </nav>
 
