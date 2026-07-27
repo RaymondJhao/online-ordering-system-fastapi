@@ -24,10 +24,12 @@ def create_app(config_class=Config):
 
     from . import models  # noqa: F401  (registers models with SQLAlchemy)
     from .routes.auth import auth_bp
+    from .routes.menu import menu_bp
     from .routes.order import order_bp
     from .routes.payment import payment_bp
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(menu_bp)
     app.register_blueprint(order_bp)
     app.register_blueprint(payment_bp)
 
