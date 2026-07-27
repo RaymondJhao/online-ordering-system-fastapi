@@ -1,15 +1,16 @@
 """背景排程任務。
 
 商業邏輯說明 -『自動釋出未付款庫存』：
-顧客下單後，訂單狀態會先是 'New'，代表商家已經知道要準備哪些餐點；
-如果顧客遲遲不去完成綠界付款，這筆訂單就會一直卡在 'New'，等同於幫顧客
-「預留」了這些餐點的庫存/備料資源，但實際上這筆訂單很可能已經被放棄。
+顧客下單後，訂單狀態會先是 'PENDING'、付款狀態是 'UNPAID'，代表商家已經
+知道要準備哪些餐點，但顧客尚未完成付款；如果顧客遲遲不去完成綠界付款，
+這筆訂單就會一直卡在 'PENDING' / 'UNPAID'，等同於幫顧客「預留」了這些
+餐點的庫存/備料資源，但實際上這筆訂單很可能已經被放棄。
 如果沒有機制清掉這種棄單，庫存會被無意義地卡住，導致其他顧客明明看得到
 菜單，卻買不到已經被「假裝要買」的餐點。
 
 因此這裡用 APScheduler 開一個背景排程，每分鐘檢查一次：只要訂單建立超過
-15 分鐘還沒有付款完成（仍是 'New' 狀態），就視為棄單，自動轉成
-'Cancelled'，把庫存釋放回去，讓系統維持正常運作。
+15 分鐘仍是 'PENDING' 狀態且 'UNPAID' 未付款，就視為棄單，自動轉成
+'CANCELLED'，把庫存釋放回去，讓系統維持正常運作。
 """
 
 import logging
@@ -18,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from .extensions import db
-from .models import Order, OrderStatus
+from .models import Order, OrderStatus, PaymentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +28,9 @@ UNPAID_ORDER_TIMEOUT_MINUTES = 15
 
 
 def cancel_unpaid_orders(app):
-    """找出所有狀態仍是 'New'、但建立時間已經超過 15 分鐘的訂單，
-    代表顧客下單後遲遲沒有完成綠界付款，直接視為棄單並自動取消，
+    """找出所有狀態仍是 'PENDING'、付款狀態仍是 'UNPAID'，
+    但建立時間已經超過 15 分鐘的訂單，代表顧客下單後遲遲沒有完成
+    綠界付款，直接視為棄單並自動取消，
     藉此釋放被這些訂單佔用的餐點庫存，讓其他顧客可以正常下單。
 
     這個函式會被 BackgroundScheduler 放在獨立的執行緒裡呼叫，
@@ -41,10 +43,11 @@ def cancel_unpaid_orders(app):
         )
 
         try:
-            # 只挑「還沒付款（New）」且「建立時間早於 15 分鐘前」的訂單，
-            # 已經在處理中、已完成、已取消的訂單都不受影響。
+            # 只挑「還沒付款（UNPAID）」且「商家尚未處理（PENDING）」、
+            # 「建立時間早於 15 分鐘前」的訂單，已經處理中、已完成、已取消的訂單都不受影響。
             expired_orders = Order.query.filter(
-                Order.status == OrderStatus.NEW,
+                Order.status == OrderStatus.PENDING,
+                Order.payment_status == PaymentStatus.UNPAID,
                 Order.created_at < cutoff_time,
             ).all()
 

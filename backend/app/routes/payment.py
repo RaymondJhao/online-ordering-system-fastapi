@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 
 from ..extensions import db, limiter
-from ..models import Order, OrderStatus
+from ..models import Order, OrderStatus, PaymentStatus
 from ..utils.ecpay import generate_check_mac_value
 
 payment_bp = Blueprint("payment", __name__, url_prefix="/api/payment")
@@ -33,8 +33,10 @@ def checkout(order_id):
         return jsonify({"message": "訂單不存在"}), 404
     if order.customer_id != customer_id:
         return jsonify({"message": "無權操作此訂單"}), 403
-    if order.status != OrderStatus.NEW:
+    if order.status != OrderStatus.PENDING:
         return jsonify({"message": "此訂單目前狀態無法建立付款"}), 400
+    if order.payment_status != PaymentStatus.UNPAID:
+        return jsonify({"message": "此訂單已完成付款或退款，無法重複建立付款"}), 400
 
     merchant_trade_no = f"ORD{order.id}{int(time.time())}"
 
@@ -74,9 +76,9 @@ def ecpay_callback():
         order_id = data.get("CustomField1")
         order = Order.query.get(int(order_id)) if order_id and order_id.isdigit() else None
 
-        if order is not None and order.status == OrderStatus.NEW:
+        if order is not None and order.payment_status == PaymentStatus.UNPAID:
             try:
-                order.status = OrderStatus.PROCESSING
+                order.payment_status = PaymentStatus.PAID
                 db.session.commit()
             except Exception:
                 db.session.rollback()

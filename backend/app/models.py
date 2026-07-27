@@ -11,11 +11,20 @@ def utcnow():
 
 
 class OrderStatus(enum.Enum):
-    NEW = "New"
-    PROCESSING = "Processing"
-    READY = "Ready"
-    COMPLETED = "Completed"
-    CANCELLED = "Cancelled"
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    PREPARING = "PREPARING"
+    READY = "READY"
+    COMPLETED = "COMPLETED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+    REFUNDED = "REFUNDED"
+
+
+class PaymentStatus(enum.Enum):
+    UNPAID = "UNPAID"
+    PAID = "PAID"
+    REFUNDED = "REFUNDED"
 
 
 class Customer(db.Model):
@@ -77,6 +86,7 @@ class MenuItem(db.Model):
     price = db.Column(db.Numeric(10, 2), nullable=False)
     description = db.Column(db.String(500))
     is_available = db.Column(db.Boolean, default=True, nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
 
     merchant = db.relationship("Merchant", back_populates="menu_items")
@@ -100,9 +110,15 @@ class Order(db.Model):
     total_price = db.Column(db.Numeric(10, 2), nullable=False)
     status = db.Column(
         db.Enum(OrderStatus, values_callable=lambda e: [member.value for member in e]),
-        default=OrderStatus.NEW,
+        default=OrderStatus.PENDING,
         nullable=False,
     )
+    payment_status = db.Column(
+        db.Enum(PaymentStatus, values_callable=lambda e: [member.value for member in e]),
+        default=PaymentStatus.UNPAID,
+        nullable=False,
+    )
+    reject_reason = db.Column(db.String(255), nullable=True)
     pickup_time = db.Column(db.DateTime)
     table_number = db.Column(db.String(20), nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)

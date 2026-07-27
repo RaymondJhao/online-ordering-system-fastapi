@@ -8,6 +8,19 @@ order_bp = Blueprint("order", __name__, url_prefix="/api/orders")
 
 VALID_STATUSES = {status.value for status in OrderStatus}
 
+# 嚴格狀態轉移表：key 為目前狀態，value 為允許轉入的下一個狀態集合。
+# 不在此表中的轉移一律視為非法（含「轉回自己」與任何跳躍式轉移）。
+ALLOWED_TRANSITIONS = {
+    OrderStatus.PENDING: {OrderStatus.ACCEPTED, OrderStatus.REJECTED},
+    OrderStatus.ACCEPTED: {OrderStatus.PREPARING, OrderStatus.CANCELLED},
+    OrderStatus.PREPARING: {OrderStatus.READY, OrderStatus.CANCELLED},
+    OrderStatus.READY: {OrderStatus.COMPLETED},
+    OrderStatus.COMPLETED: {OrderStatus.REFUNDED},
+    OrderStatus.REJECTED: set(),
+    OrderStatus.CANCELLED: set(),
+    OrderStatus.REFUNDED: set(),
+}
+
 
 def serialize_order(order):
     return {
@@ -15,6 +28,8 @@ def serialize_order(order):
         "customer_id": order.customer_id,
         "merchant_id": order.merchant_id,
         "status": order.status.value,
+        "payment_status": order.payment_status.value,
+        "reject_reason": order.reject_reason,
         "total_price": float(order.total_price),
         "pickup_time": order.pickup_time.isoformat() if order.pickup_time else None,
         "table_number": order.table_number,
@@ -92,7 +107,7 @@ def create_order():
             customer_id=customer_id,
             merchant_id=merchant_id,
             total_price=0,
-            status=OrderStatus.NEW,
+            status=OrderStatus.PENDING,
             table_number=data.get("table_number"),
         )
 
@@ -163,7 +178,27 @@ def update_order_status(order_id):
             400,
         )
 
-    order.status = OrderStatus(new_status)
+    target_status = OrderStatus(new_status)
+
+    if target_status == OrderStatus.REJECTED:
+        reject_reason = data.get("reject_reason")
+        if not reject_reason or not str(reject_reason).strip():
+            return jsonify({"message": "拒絕訂單時必須提供 reject_reason"}), 400
+
+    if target_status not in ALLOWED_TRANSITIONS.get(order.status, set()):
+        return (
+            jsonify(
+                {
+                    "message": f"無法將訂單狀態從 {order.status.value} 轉換為 {target_status.value}"
+                }
+            ),
+            409,
+        )
+
+    if target_status == OrderStatus.REJECTED:
+        order.reject_reason = str(data.get("reject_reason")).strip()
+
+    order.status = target_status
     db.session.commit()
 
     return jsonify({"message": "訂單狀態已更新", "order": serialize_order(order)}), 200
