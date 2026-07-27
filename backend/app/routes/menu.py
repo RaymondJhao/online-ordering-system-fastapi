@@ -15,7 +15,7 @@ def serialize_menu_item(item):
     }
 
 
-@menu_bp.route("/", methods=["GET"])
+@menu_bp.route("/", methods=["GET"], strict_slashes=False)
 def list_menu_items():
     items = MenuItem.query.filter_by(is_available=True).all()
     return jsonify([serialize_menu_item(item) for item in items]), 200
