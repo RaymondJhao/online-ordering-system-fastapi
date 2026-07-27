@@ -1,7 +1,7 @@
-from flask import Flask
+from flask import Flask, jsonify
 
 from .config import Config
-from .extensions import bcrypt, db, jwt
+from .extensions import bcrypt, db, jwt, limiter
 
 
 def create_app(config_class=Config):
@@ -11,6 +11,14 @@ def create_app(config_class=Config):
     db.init_app(app)
     bcrypt.init_app(app)
     jwt.init_app(app)
+    limiter.init_app(app)
+
+    @app.errorhandler(429)
+    def handle_rate_limit_exceeded(error):
+        return (
+            jsonify({"message": f"請求過於頻繁，請稍後再試（限制：{error.description}）"}),
+            429,
+        )
 
     from . import models  # noqa: F401  (registers models with SQLAlchemy)
     from .routes.auth import auth_bp

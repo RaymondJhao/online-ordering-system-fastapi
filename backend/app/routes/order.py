@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 
-from ..extensions import db
+from ..extensions import db, limiter
 from ..models import MenuItem, Merchant, Order, OrderItem, OrderStatus
 
 order_bp = Blueprint("order", __name__, url_prefix="/api/orders")
@@ -32,6 +32,7 @@ def serialize_order(order):
 
 
 @order_bp.route("", methods=["POST"])
+@limiter.limit("5 per minute")
 @jwt_required()
 def create_order():
     if get_jwt().get("role") != "customer":

@@ -5,7 +5,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 
-from ..extensions import db
+from ..extensions import db, limiter
 from ..models import Order, OrderStatus
 from ..utils.ecpay import generate_check_mac_value
 
@@ -20,6 +20,7 @@ ECPAY_RETURN_URL = os.environ.get(
 
 
 @payment_bp.route("/checkout/<int:order_id>", methods=["POST"])
+@limiter.limit("3 per minute")
 @jwt_required()
 def checkout(order_id):
     if get_jwt().get("role") != "customer":
