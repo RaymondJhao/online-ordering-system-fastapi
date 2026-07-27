@@ -2,9 +2,10 @@ import os
 import time
 from datetime import datetime
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 
+from ..extensions import db
 from ..models import Order, OrderStatus
 from ..utils.ecpay import generate_check_mac_value
 
@@ -47,7 +48,37 @@ def checkout(order_id):
         "ReturnURL": ECPAY_RETURN_URL,
         "ChoosePayment": "Credit",
         "EncryptType": 1,
+        # 綠界會原封不動把 CustomField1~4 傳回 ReturnURL callback，用它來可靠地帶回 order_id，
+        # 不要依賴解析 MerchantTradeNo（id 跟 timestamp 中間沒有分隔符，解析回去會有歧義）。
+        "CustomField1": str(order.id),
     }
     params["CheckMacValue"] = generate_check_mac_value(params)
 
     return jsonify({"payment_url": ECPAY_CHECKOUT_URL, "form_data": params}), 200
+
+
+@payment_bp.route("/callback", methods=["POST"])
+def ecpay_callback():
+    """綠界 ReturnURL：綠界的背景伺服器直接呼叫，沒有登入者、不能用 JWT 驗證身分。
+    改用 CheckMacValue 驗證這筆通知確實來自綠界、且內容未被竄改。"""
+    data = request.form.to_dict()
+
+    received_mac = data.pop("CheckMacValue", None)
+    expected_mac = generate_check_mac_value(data)
+
+    if not received_mac or received_mac != expected_mac:
+        return "0|Error"
+
+    if data.get("RtnCode") == "1":
+        order_id = data.get("CustomField1")
+        order = Order.query.get(int(order_id)) if order_id and order_id.isdigit() else None
+
+        if order is not None and order.status == OrderStatus.NEW:
+            try:
+                order.status = OrderStatus.PROCESSING
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                return "0|Error"
+
+    return "1|OK"
