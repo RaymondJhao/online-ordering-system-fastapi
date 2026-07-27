@@ -1,9 +1,23 @@
-import { createContext, useContext, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 
 const CartContext = createContext(null)
+const CART_STORAGE_KEY = 'shopping_cart'
+
+function loadStoredCart() {
+  try {
+    const stored = localStorage.getItem(CART_STORAGE_KEY)
+    return stored ? JSON.parse(stored) : []
+  } catch {
+    return []
+  }
+}
 
 export function CartProvider({ children }) {
-  const [cart, setCart] = useState([])
+  const [cart, setCart] = useState(loadStoredCart)
+
+  useEffect(() => {
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart))
+  }, [cart])
 
   const addToCart = (item) => {
     setCart((prev) => {
@@ -31,7 +45,10 @@ export function CartProvider({ children }) {
     )
   }
 
-  const clearCart = () => setCart([])
+  const clearCart = () => {
+    setCart([])
+    localStorage.removeItem(CART_STORAGE_KEY)
+  }
 
   const totalCount = useMemo(
     () => cart.reduce((sum, item) => sum + item.quantity, 0),
