@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useCart } from '../context/CartContext'
@@ -26,12 +26,17 @@ function Checkout() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
+  useEffect(() => {
+    if (!localStorage.getItem('token')) {
+      navigate('/auth')
+    }
+  }, [navigate])
+
   const handleConfirmPayment = async () => {
     setError(null)
 
-    const token = localStorage.getItem('token')
-    if (!token) {
-      setError('請先登入後再進行付款')
+    if (!localStorage.getItem('token')) {
+      navigate('/auth')
       return
     }
     if (cart.length === 0) {
@@ -42,27 +47,18 @@ function Checkout() {
     setIsSubmitting(true)
 
     try {
-      const authHeader = { Authorization: `Bearer ${token}` }
-
-      const orderRes = await axios.post(
-        '/api/orders',
-        {
-          merchant_id: cart[0].merchant_id,
-          items: cart.map((item) => ({
-            menu_item_id: item.id,
-            quantity: item.quantity,
-          })),
-        },
-        { headers: authHeader }
-      )
+      // Authorization header 由全域 axios 攔截器（src/lib/axios.js）自動附加
+      const orderRes = await axios.post('/api/orders', {
+        merchant_id: cart[0].merchant_id,
+        items: cart.map((item) => ({
+          menu_item_id: item.id,
+          quantity: item.quantity,
+        })),
+      })
 
       const orderId = orderRes.data.order.id
 
-      const paymentRes = await axios.post(
-        `/api/payment/checkout/${orderId}`,
-        {},
-        { headers: authHeader }
-      )
+      const paymentRes = await axios.post(`/api/payment/checkout/${orderId}`)
 
       const { payment_url, form_data } = paymentRes.data
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { ShoppingCart, Plus, Minus, X, User } from 'lucide-react'
+import { ShoppingCart, Plus, Minus, X, User, LogOut } from 'lucide-react'
 import { useCart } from '../context/CartContext'
 
 function CustomerMenu() {
@@ -11,6 +11,21 @@ function CustomerMenu() {
   const [isCartOpen, setIsCartOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
+  const isLoggedIn = !!localStorage.getItem('token')
+
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    window.location.reload()
+  }
+
+  const goToCheckout = () => {
+    setIsCartOpen(false)
+    if (!localStorage.getItem('token')) {
+      navigate('/auth')
+      return
+    }
+    navigate('/checkout')
+  }
 
   useEffect(() => {
     axios
@@ -35,14 +50,25 @@ function CustomerMenu() {
             美味點餐
           </h1>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => navigate('/auth')}
-              className="flex items-center gap-2 rounded-full border border-gray-300 px-4 py-2 text-gray-600 hover:bg-gray-100 transition-colors"
-            >
-              <User size={20} />
-              <span className="hidden sm:inline">登入 / 註冊</span>
-            </button>
+            {isLoggedIn ? (
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex items-center gap-2 rounded-full border border-gray-300 px-4 py-2 text-gray-600 hover:bg-gray-100 transition-colors"
+              >
+                <LogOut size={20} />
+                <span className="hidden sm:inline">登出</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => navigate('/auth')}
+                className="flex items-center gap-2 rounded-full border border-gray-300 px-4 py-2 text-gray-600 hover:bg-gray-100 transition-colors"
+              >
+                <User size={20} />
+                <span className="hidden sm:inline">登入 / 註冊</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setIsCartOpen(true)}
@@ -166,10 +192,7 @@ function CustomerMenu() {
               <button
                 type="button"
                 disabled={cart.length === 0}
-                onClick={() => {
-                  setIsCartOpen(false)
-                  navigate('/checkout')
-                }}
+                onClick={goToCheckout}
                 className="w-full rounded-full bg-orange-500 py-3 font-medium text-white shadow hover:bg-orange-600 transition-colors disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 前往結帳
