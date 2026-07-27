@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Build & Cache output
+dist/
+.vite/
+
+# Environment variables
+.env
+.env.local
