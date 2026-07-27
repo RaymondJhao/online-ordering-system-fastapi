@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { ShoppingCart, Plus, Minus, X } from 'lucide-react'
+import { useCart } from '../context/CartContext'
 
 function CustomerMenu() {
+  const navigate = useNavigate()
+  const { cart, addToCart, changeQuantity, totalCount, totalPrice } = useCart()
   const [menuItems, setMenuItems] = useState([])
-  const [cart, setCart] = useState([])
   const [isCartOpen, setIsCartOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -23,35 +26,6 @@ function CustomerMenu() {
         setIsLoading(false)
       })
   }, [])
-
-  const addToCart = (item) => {
-    setCart((prev) => {
-      const existing = prev.find((cartItem) => cartItem.id === item.id)
-      if (existing) {
-        return prev.map((cartItem) =>
-          cartItem.id === item.id
-            ? { ...cartItem, quantity: cartItem.quantity + 1 }
-            : cartItem
-        )
-      }
-      return [...prev, { ...item, quantity: 1 }]
-    })
-  }
-
-  const changeQuantity = (itemId, delta) => {
-    setCart((prev) =>
-      prev
-        .map((cartItem) =>
-          cartItem.id === itemId
-            ? { ...cartItem, quantity: cartItem.quantity + delta }
-            : cartItem
-        )
-        .filter((cartItem) => cartItem.quantity > 0)
-    )
-  }
-
-  const totalCount = cart.reduce((sum, item) => sum + item.quantity, 0)
-  const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -182,6 +156,10 @@ function CustomerMenu() {
               <button
                 type="button"
                 disabled={cart.length === 0}
+                onClick={() => {
+                  setIsCartOpen(false)
+                  navigate('/checkout')
+                }}
                 className="w-full rounded-full bg-orange-500 py-3 font-medium text-white shadow hover:bg-orange-600 transition-colors disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 前往結帳

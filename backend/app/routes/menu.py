@@ -8,6 +8,7 @@ menu_bp = Blueprint("menu", __name__, url_prefix="/api/menu")
 def serialize_menu_item(item):
     return {
         "id": item.id,
+        "merchant_id": item.merchant_id,
         "name": item.name,
         "price": float(item.price),
         "description": item.description,
