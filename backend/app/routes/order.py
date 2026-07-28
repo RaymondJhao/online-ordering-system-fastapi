@@ -1,8 +1,18 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from ..extensions import db, limiter
-from ..models import MenuItem, Merchant, Order, OrderItem, OrderStatus, PaymentMethod
+from ..models import (
+    IdempotencyRecord,
+    MenuItem,
+    Merchant,
+    Order,
+    OrderItem,
+    OrderStatus,
+    PaymentMethod,
+)
 
 order_bp = Blueprint("order", __name__, url_prefix="/api/orders")
 
@@ -54,6 +64,15 @@ def serialize_order(order):
 def create_order():
     if get_jwt().get("role") != "customer":
         return jsonify({"message": "僅限顧客下單"}), 403
+
+    # 冪等性防護：客戶端在網路逾時／雙擊送出等情況下可能用同一把 Idempotency-Key
+    # 重送同一筆下單請求。若這把 key 先前已經處理過，直接回傳當初存下的回應，
+    # 絕對不要重複扣庫存或重複建單。
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if idempotency_key:
+        existing_record = IdempotencyRecord.query.filter_by(key=idempotency_key).first()
+        if existing_record is not None:
+            return jsonify(existing_record.response_body), 200
 
     customer_id = int(get_jwt_identity())
     data = request.get_json(silent=True) or {}
@@ -110,8 +129,9 @@ def create_order():
     if len(menu_item_map) != len(set(menu_item_ids)):
         return jsonify({"message": "部分餐點不存在，或不屬於指定的商家"}), 400
 
-    # 由後端依資料庫單價計算總價，避免前端價格造假；Order 與所有 OrderItem
-    # 於同一個 session/transaction 內寫入，任何一步失敗都會整筆 rollback。
+    # 由後端依資料庫單價計算總價，避免前端價格造假；Order、所有 OrderItem、
+    # 庫存扣減與 IdempotencyRecord 都在同一個 session/transaction 內寫入，
+    # 任何一步失敗都會整筆 rollback。
     try:
         total_price = 0
         order = Order(
@@ -133,13 +153,56 @@ def create_order():
 
         order.total_price = total_price
 
+        # 原子扣庫存：不能先 SELECT 讀庫存再判斷再 UPDATE，兩個請求之間有空隙，
+        # 高併發下會超賣（race condition）。改用單一 SQL 語句，把「檢查庫存足夠」
+        # 跟「扣庫存」在資料庫層級合成同一個原子操作：WHERE 條件同時卡數量與 id，
+        # 若該列因為 stock 不足而沒被 WHERE 卡到，rowcount 就會是 0。
+        for menu_item_id, quantity in parsed_items:
+            result = db.session.execute(
+                text(
+                    "UPDATE menu_items SET stock = stock - :quantity "
+                    "WHERE id = :id AND stock >= :quantity"
+                ),
+                {"quantity": quantity, "id": menu_item_id},
+            )
+            if result.rowcount == 0:
+                db.session.rollback()
+                return (
+                    jsonify(
+                        {
+                            "message": f"餐點庫存不足，訂單建立失敗（menu_item_id={menu_item_id}）"
+                        }
+                    ),
+                    400,
+                )
+
         db.session.add(order)
+        db.session.flush()  # 取得 order.id，讓存進 IdempotencyRecord 的回應內容是完整的
+
+        response_body = {"message": "訂單建立成功", "order": serialize_order(order)}
+
+        if idempotency_key:
+            db.session.add(
+                IdempotencyRecord(key=idempotency_key, response_body=response_body)
+            )
+
         db.session.commit()
+    except IntegrityError:
+        # 極端併發情況：兩個帶著相同 Idempotency-Key 的請求同時通過了前面的
+        # 「查無記錄」檢查，此時 unique key 的資料庫約束會讓後 commit 的那個
+        # 請求在這裡失敗；rollback 掉它自己（含庫存扣減），改回傳先寫入成功
+        # 那筆請求的回應，確保不會重複扣庫存或重複建單。
+        db.session.rollback()
+        if idempotency_key:
+            existing_record = IdempotencyRecord.query.filter_by(key=idempotency_key).first()
+            if existing_record is not None:
+                return jsonify(existing_record.response_body), 200
+        return jsonify({"message": "訂單建立失敗，請稍後再試"}), 500
     except Exception:
         db.session.rollback()
         return jsonify({"message": "訂單建立失敗，請稍後再試"}), 500
 
-    return jsonify({"message": "訂單建立成功", "order": serialize_order(order)}), 201
+    return jsonify(response_body), 201
 
 
 @order_bp.route("", methods=["GET"])

@@ -92,6 +92,7 @@ class MenuItem(db.Model):
     description = db.Column(db.String(500))
     is_available = db.Column(db.Boolean, default=True, nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    stock = db.Column(db.Integer, default=0, nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
 
     merchant = db.relationship("Merchant", back_populates="menu_items")
@@ -160,3 +161,15 @@ class OrderItem(db.Model):
 
     order = db.relationship("Order", back_populates="order_items")
     menu_item = db.relationship("MenuItem", back_populates="order_items")
+
+
+class IdempotencyRecord(db.Model):
+    """記錄已處理過的 Idempotency-Key 與其對應的回應內容，
+    用來防止客戶端重試/雙擊送出同一筆請求時重複扣庫存、重複建單。"""
+
+    __tablename__ = "idempotency_records"
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    response_body = db.Column(db.JSON, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)

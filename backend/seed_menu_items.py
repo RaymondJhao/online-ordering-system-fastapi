@@ -21,12 +21,12 @@ with app.app_context():
         raise SystemExit(f"找不到 email={merchant_email} 的商家，請先用 Postman 註冊一個 merchant 帳號")
 
     items = [
-        MenuItem(merchant_id=merchant.id, name="招牌漢堡", price=120, description="測試用品項"),
-        MenuItem(merchant_id=merchant.id, name="薯條", price=60, description="測試用品項"),
+        MenuItem(merchant_id=merchant.id, name="招牌漢堡", price=120, description="測試用品項", stock=50),
+        MenuItem(merchant_id=merchant.id, name="薯條", price=60, description="測試用品項", stock=50),
     ]
     db.session.add_all(items)
     db.session.commit()
 
     print(f"已為商家 {merchant.name}（id={merchant.id}）新增以下 MenuItem：")
     for item in items:
-        print(f"  id={item.id}  name={item.name}  price={item.price}")
+        print(f"  id={item.id}  name={item.name}  price={item.price}  stock={item.stock}")
