@@ -32,6 +32,11 @@ class PaymentMethod(enum.Enum):
     ONLINE = "ONLINE"
 
 
+class DiscountType(enum.Enum):
+    PERCENTAGE = "PERCENTAGE"
+    FIXED = "FIXED"
+
+
 class Customer(db.Model):
     __tablename__ = "customers"
 
@@ -72,6 +77,9 @@ class Merchant(db.Model):
     orders = db.relationship(
         "Order", back_populates="merchant", cascade="all, delete-orphan"
     )
+    coupons = db.relationship(
+        "Coupon", back_populates="merchant", cascade="all, delete-orphan"
+    )
 
     def set_password(self, password):
         self.password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
@@ -103,6 +111,26 @@ class MenuItem(db.Model):
     orders = association_proxy("order_items", "order")
 
 
+class Coupon(db.Model):
+    __tablename__ = "coupons"
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(50), unique=True, nullable=False)
+    discount_type = db.Column(
+        db.Enum(DiscountType, values_callable=lambda e: [member.value for member in e]),
+        nullable=False,
+    )
+    discount_value = db.Column(db.Integer, nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    merchant_id = db.Column(
+        db.Integer, db.ForeignKey("merchants.id"), nullable=False
+    )
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    merchant = db.relationship("Merchant", back_populates="coupons")
+    orders = db.relationship("Order", back_populates="coupon")
+
+
 class Order(db.Model):
     __tablename__ = "orders"
 
@@ -114,6 +142,10 @@ class Order(db.Model):
         db.Integer, db.ForeignKey("merchants.id"), nullable=False
     )
     total_price = db.Column(db.Numeric(10, 2), nullable=False)
+    coupon_id = db.Column(
+        db.Integer, db.ForeignKey("coupons.id"), nullable=True
+    )
+    discount_amount = db.Column(db.Integer, default=0, nullable=False)
     status = db.Column(
         db.Enum(OrderStatus, values_callable=lambda e: [member.value for member in e]),
         default=OrderStatus.PENDING,
@@ -136,6 +168,7 @@ class Order(db.Model):
 
     customer = db.relationship("Customer", back_populates="orders")
     merchant = db.relationship("Merchant", back_populates="orders")
+    coupon = db.relationship("Coupon", back_populates="orders")
     # one order -> many order lines
     order_items = db.relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan"

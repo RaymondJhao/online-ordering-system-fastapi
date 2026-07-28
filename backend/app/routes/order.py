@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import text
@@ -5,6 +7,8 @@ from sqlalchemy.exc import IntegrityError
 
 from ..extensions import db, limiter
 from ..models import (
+    Coupon,
+    DiscountType,
     IdempotencyRecord,
     MenuItem,
     Merchant,
@@ -43,6 +47,8 @@ def serialize_order(order):
         "payment_method": order.payment_method.value,
         "reject_reason": order.reject_reason,
         "total_price": float(order.total_price),
+        "coupon_id": order.coupon_id,
+        "discount_amount": order.discount_amount,
         "pickup_time": order.pickup_time.isoformat() if order.pickup_time else None,
         "table_number": order.table_number,
         "created_at": order.created_at.isoformat(),
@@ -103,6 +109,23 @@ def create_order():
             400,
         )
 
+    pickup_time = None
+    raw_pickup_time = data.get("pickup_time")
+    if raw_pickup_time:
+        try:
+            pickup_time = datetime.fromisoformat(str(raw_pickup_time).replace("Z", "+00:00"))
+        except ValueError:
+            return jsonify({"message": "pickup_time 格式錯誤，請使用 ISO 8601 格式"}), 400
+
+    coupon = None
+    coupon_code = data.get("coupon_code")
+    if coupon_code:
+        coupon = Coupon.query.filter_by(
+            code=coupon_code, merchant_id=merchant_id, is_active=True
+        ).first()
+        if coupon is None:
+            return jsonify({"message": "優惠碼不存在、已停用，或不適用於此商家"}), 400
+
     # 驗證每個品項的格式與數量，並收集要查詢的 menu_item_id
     parsed_items = []
     for raw_item in items:
@@ -141,6 +164,7 @@ def create_order():
             status=OrderStatus.PENDING,
             payment_method=PaymentMethod(payment_method),
             table_number=data.get("table_number"),
+            pickup_time=pickup_time,
         )
 
         for menu_item_id, quantity in parsed_items:
@@ -151,7 +175,18 @@ def create_order():
                 OrderItem(menu_item_id=menu_item.id, quantity=quantity, price=unit_price)
             )
 
-        order.total_price = total_price
+        # 依優惠券折抵，折扣金額不可超過購物車原始總價（避免出現負的訂單金額）
+        discount_amount = 0
+        if coupon is not None:
+            if coupon.discount_type == DiscountType.PERCENTAGE:
+                discount_amount = int(total_price * coupon.discount_value / 100)
+            else:
+                discount_amount = coupon.discount_value
+            discount_amount = max(0, min(discount_amount, int(total_price)))
+            order.coupon_id = coupon.id
+
+        order.discount_amount = discount_amount
+        order.total_price = total_price - discount_amount
 
         # 原子扣庫存：不能先 SELECT 讀庫存再判斷再 UPDATE，兩個請求之間有空隙，
         # 高併發下會超賣（race condition）。改用單一 SQL 語句，把「檢查庫存足夠」
