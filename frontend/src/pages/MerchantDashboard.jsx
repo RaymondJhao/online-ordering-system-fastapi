@@ -9,16 +9,25 @@ import {
   XCircle,
   Ban,
   AlertTriangle,
-  X,
   ChevronLeft,
   ChevronRight,
   RefreshCw,
   Banknote,
   CreditCard,
+  LayoutDashboard,
+  Package,
+  Ticket,
+  Plus,
 } from "lucide-react";
 
 const PAGE_SIZE = 8;
 const AUTO_REFRESH_MS = 10000;
+
+const TABS = [
+  { id: "orders", label: "訂單看板", icon: LayoutDashboard },
+  { id: "inventory", label: "庫存查詢", icon: Package },
+  { id: "coupons", label: "優惠券管理", icon: Ticket },
+];
 
 // 狀態外觀設定：色弱友善設計 — 每個狀態都同時有「顏色」+「圖示」+「純文字標籤」，
 // 使用者不需要只靠顏色就能分辨狀態。
@@ -87,7 +96,7 @@ const ACTIONS_BY_STATUS = {
   PREPARING: [
     {
       status: "READY",
-      label: "完成製作",
+      label: "餐點完成",
       icon: BellRing,
       className: "bg-emerald-600 hover:bg-emerald-700 text-white",
       destructive: false,
@@ -120,6 +129,11 @@ const REJECT_REASON_PRESETS = [
 // 大螢幕只顯示「還需要人處理」的訂單，COMPLETED / REJECTED / CANCELLED / REFUNDED
 // 這些終態訂單不佔用看板版位。
 const ACTIVE_STATUSES = new Set(["PENDING", "ACCEPTED", "PREPARING", "READY"]);
+
+const DISCOUNT_TYPE_LABELS = {
+  PERCENTAGE: "百分比折扣",
+  FIXED: "固定金額折抵",
+};
 
 function StatusBadge({ status }) {
   const config = STATUS_CONFIG[status];
@@ -322,6 +336,24 @@ function OrderCard({ order, isProcessing, onAction }) {
         ))}
       </ul>
 
+      {order.pickup_time && (
+        <p className="mx-5 mb-1 text-base text-gray-600">
+          預約取餐：
+          <span className="font-semibold text-gray-900">
+            {new Date(order.pickup_time).toLocaleString("zh-TW", {
+              dateStyle: "short",
+              timeStyle: "short",
+            })}
+          </span>
+        </p>
+      )}
+
+      {order.discount_amount > 0 && (
+        <p className="mx-5 mb-1 text-base text-orange-600">
+          優惠折抵：- NT$ {order.discount_amount}
+        </p>
+      )}
+
       <div className="flex items-center justify-between px-5 py-3 text-lg font-bold text-gray-900">
         <span>總金額</span>
         <span>NT$ {order.total_price}</span>
@@ -356,8 +388,7 @@ function OrderCard({ order, isProcessing, onAction }) {
   );
 }
 
-function MerchantDashboard() {
-  const navigate = useNavigate();
+function OrderBoardPanel({ onAuthError }) {
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -369,12 +400,6 @@ function MerchantDashboard() {
   const intervalRef = useRef(null);
 
   const fetchOrders = useCallback(async () => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      navigate("/auth", { state: { from: "/merchant" } });
-      return;
-    }
-
     try {
       const res = await axios.get("/api/orders");
       setOrders(res.data.orders ?? []);
@@ -382,14 +407,14 @@ function MerchantDashboard() {
       setLastUpdatedAt(new Date());
     } catch (err) {
       if (err.response?.status === 401) {
-        navigate("/auth", { state: { from: "/merchant" } });
+        onAuthError();
         return;
       }
       setError(err.response?.data?.message ?? "無法取得訂單資料，請稍後再試");
     } finally {
       setIsLoading(false);
     }
-  }, [navigate]);
+  }, [onAuthError]);
 
   useEffect(() => {
     fetchOrders();
@@ -443,96 +468,89 @@ function MerchantDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900">
-      <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-900/95 px-6 py-5 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-white">商家接單大螢幕</h1>
-            <p className="mt-1 text-lg text-gray-300">
-              待處理總數：
-              <span className="text-2xl font-bold text-amber-400">
-                {activeOrders.length}
-              </span>{" "}
-              筆
-            </p>
-          </div>
+    <>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <p className="text-lg text-gray-300">
+          待處理總數：
+          <span className="text-2xl font-bold text-amber-400">
+            {activeOrders.length}
+          </span>{" "}
+          筆
+        </p>
 
-          <div className="flex items-center gap-4">
-            {lastUpdatedAt && (
-              <span className="text-sm text-gray-400">
-                最後更新：{lastUpdatedAt.toLocaleTimeString("zh-TW")}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={fetchOrders}
-              className="flex min-h-[48px] min-w-[48px] items-center gap-2 rounded-xl border border-gray-600 px-4 text-lg font-semibold text-white hover:bg-gray-800"
-            >
-              <RefreshCw size={22} aria-hidden="true" />
-              重新整理
-            </button>
-          </div>
+        <div className="flex items-center gap-4">
+          {lastUpdatedAt && (
+            <span className="text-sm text-gray-400">
+              最後更新：{lastUpdatedAt.toLocaleTimeString("zh-TW")}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={fetchOrders}
+            className="flex min-h-[48px] min-w-[48px] items-center gap-2 rounded-xl border border-gray-600 px-4 text-lg font-semibold text-white hover:bg-gray-800"
+          >
+            <RefreshCw size={22} aria-hidden="true" />
+            重新整理
+          </button>
         </div>
-      </header>
+      </div>
 
-      <main className="mx-auto max-w-7xl px-6 py-8">
-        {isLoading && (
-          <p className="py-16 text-center text-2xl text-gray-300">
-            訂單載入中...
-          </p>
-        )}
+      {isLoading && (
+        <p className="py-16 text-center text-2xl text-gray-300">
+          訂單載入中...
+        </p>
+      )}
 
-        {!isLoading && error && (
-          <p className="py-16 text-center text-2xl text-red-400">{error}</p>
-        )}
+      {!isLoading && error && (
+        <p className="py-16 text-center text-2xl text-red-400">{error}</p>
+      )}
 
-        {!isLoading && !error && activeOrders.length === 0 && (
-          <p className="py-16 text-center text-2xl text-gray-300">
-            目前沒有需要處理的訂單
-          </p>
-        )}
+      {!isLoading && !error && activeOrders.length === 0 && (
+        <p className="py-16 text-center text-2xl text-gray-300">
+          目前沒有需要處理的訂單
+        </p>
+      )}
 
-        {!isLoading && !error && activeOrders.length > 0 && (
-          <>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-              {pagedOrders.map((order) => (
-                <OrderCard
-                  key={order.id}
-                  order={order}
-                  isProcessing={processingOrderId === order.id}
-                  onAction={handleAction}
-                />
-              ))}
+      {!isLoading && !error && activeOrders.length > 0 && (
+        <>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+            {pagedOrders.map((order) => (
+              <OrderCard
+                key={order.id}
+                order={order}
+                isProcessing={processingOrderId === order.id}
+                onAction={handleAction}
+              />
+            ))}
+          </div>
+
+          {pageCount > 1 && (
+            <div className="mt-8 flex items-center justify-center gap-4">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(p - 1, 0))}
+                disabled={safePage === 0}
+                className="flex min-h-[48px] min-w-[48px] items-center gap-2 rounded-xl border border-gray-600 px-4 text-lg font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ChevronLeft size={24} aria-hidden="true" />
+                上一頁
+              </button>
+              <span className="text-lg font-semibold text-gray-300">
+                第 {safePage + 1} / {pageCount} 頁
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(p + 1, pageCount - 1))}
+                disabled={safePage >= pageCount - 1}
+                className="flex min-h-[48px] min-w-[48px] items-center gap-2 rounded-xl border border-gray-600 px-4 text-lg font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                下一頁
+                <ChevronRight size={24} aria-hidden="true" />
+              </button>
             </div>
-
-            {pageCount > 1 && (
-              <div className="mt-8 flex items-center justify-center gap-4">
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => Math.max(p - 1, 0))}
-                  disabled={safePage === 0}
-                  className="flex min-h-[48px] min-w-[48px] items-center gap-2 rounded-xl border border-gray-600 px-4 text-lg font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <ChevronLeft size={24} aria-hidden="true" />
-                  上一頁
-                </button>
-                <span className="text-lg font-semibold text-gray-300">
-                  第 {safePage + 1} / {pageCount} 頁
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => Math.min(p + 1, pageCount - 1))}
-                  disabled={safePage >= pageCount - 1}
-                  className="flex min-h-[48px] min-w-[48px] items-center gap-2 rounded-xl border border-gray-600 px-4 text-lg font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  下一頁
-                  <ChevronRight size={24} aria-hidden="true" />
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </main>
+          )}
+        </>
+      )}
 
       {pendingAction?.action.status === "REJECTED" && (
         <RejectReasonModal
@@ -555,6 +573,377 @@ function MerchantDashboard() {
           onConfirm={() => submitStatusUpdate(pendingAction.order, "CANCELLED")}
         />
       )}
+    </>
+  );
+}
+
+function InventoryPanel({ onAuthError }) {
+  const [items, setItems] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+
+  const fetchInventory = useCallback(async () => {
+    try {
+      const res = await axios.get("/api/inventory");
+      setItems(res.data.items ?? []);
+      setError(null);
+      setLastUpdatedAt(new Date());
+    } catch (err) {
+      if (err.response?.status === 401) {
+        onAuthError();
+        return;
+      }
+      setError(err.response?.data?.message ?? "無法取得庫存資料，請稍後再試");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onAuthError]);
+
+  useEffect(() => {
+    fetchInventory();
+  }, [fetchInventory]);
+
+  return (
+    <>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <p className="text-lg text-gray-300">
+          品項總數：
+          <span className="text-2xl font-bold text-amber-400">{items.length}</span>{" "}
+          項
+        </p>
+
+        <div className="flex items-center gap-4">
+          {lastUpdatedAt && (
+            <span className="text-sm text-gray-400">
+              最後更新：{lastUpdatedAt.toLocaleTimeString("zh-TW")}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={fetchInventory}
+            className="flex min-h-[48px] min-w-[48px] items-center gap-2 rounded-xl border border-gray-600 px-4 text-lg font-semibold text-white hover:bg-gray-800"
+          >
+            <RefreshCw size={22} aria-hidden="true" />
+            重新整理
+          </button>
+        </div>
+      </div>
+
+      {isLoading && (
+        <p className="py-16 text-center text-2xl text-gray-300">
+          庫存載入中...
+        </p>
+      )}
+
+      {!isLoading && error && (
+        <p className="py-16 text-center text-2xl text-red-400">{error}</p>
+      )}
+
+      {!isLoading && !error && items.length === 0 && (
+        <p className="py-16 text-center text-2xl text-gray-300">
+          目前尚未建立任何餐點
+        </p>
+      )}
+
+      {!isLoading && !error && items.length > 0 && (
+        <div className="overflow-hidden rounded-2xl bg-gray-800 shadow-lg">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-left">
+              <thead>
+                <tr className="border-b border-gray-700 bg-gray-800/80 text-base font-semibold text-gray-300">
+                  <th className="px-6 py-4">餐點名稱</th>
+                  <th className="px-6 py-4">目前庫存</th>
+                  <th className="px-6 py-4">上架狀態</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {items.map((item) => (
+                  <tr
+                    key={item.id}
+                    className="text-lg text-white odd:bg-gray-800 even:bg-gray-800/60 hover:bg-gray-700/60"
+                  >
+                    <td className="px-6 py-4 font-semibold">{item.name}</td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`font-bold ${item.stock <= 5 ? "text-red-400" : "text-white"}`}
+                      >
+                        {item.stock}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold ${
+                          item.is_active
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-gray-200 text-gray-600"
+                        }`}
+                      >
+                        {item.is_active ? "上架中" : "已下架"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function CouponPanel({ onAuthError }) {
+  const [coupons, setCoupons] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [code, setCode] = useState("");
+  const [discountType, setDiscountType] = useState("FIXED");
+  const [discountValue, setDiscountValue] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState(null);
+
+  const fetchCoupons = useCallback(async () => {
+    try {
+      const res = await axios.get("/api/coupons");
+      setCoupons(res.data.coupons ?? []);
+      setError(null);
+    } catch (err) {
+      if (err.response?.status === 401) {
+        onAuthError();
+        return;
+      }
+      setError(err.response?.data?.message ?? "無法取得優惠券資料，請稍後再試");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onAuthError]);
+
+  useEffect(() => {
+    fetchCoupons();
+  }, [fetchCoupons]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setFormError(null);
+
+    if (!code.trim()) {
+      setFormError("請輸入優惠碼");
+      return;
+    }
+    if (!discountValue || Number(discountValue) <= 0) {
+      setFormError("折扣數值必須為正整數");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await axios.post("/api/coupons", {
+        code: code.trim(),
+        discount_type: discountType,
+        discount_value: Number(discountValue),
+      });
+      setCode("");
+      setDiscountValue("");
+      await fetchCoupons();
+    } catch (err) {
+      if (err.response?.status === 401) {
+        onAuthError();
+        return;
+      }
+      setFormError(err.response?.data?.message ?? "建立優惠券失敗，請稍後再試");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <form
+        onSubmit={handleSubmit}
+        className="mb-8 rounded-2xl bg-gray-800 p-6 shadow-lg"
+      >
+        <h2 className="mb-5 text-xl font-bold text-white">新增優惠券</h2>
+
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-gray-300">
+              優惠碼
+            </label>
+            <input
+              type="text"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="例：OPEN888"
+              className="min-h-[48px] w-full rounded-xl border border-gray-600 bg-gray-900 px-4 text-lg text-white placeholder:text-gray-500 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-gray-300">
+              折扣類型
+            </label>
+            <select
+              value={discountType}
+              onChange={(e) => setDiscountType(e.target.value)}
+              className="min-h-[48px] w-full rounded-xl border border-gray-600 bg-gray-900 px-4 text-lg text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+            >
+              <option value="FIXED">固定金額折抵</option>
+              <option value="PERCENTAGE">百分比折扣</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-gray-300">
+              折扣數值{discountType === "PERCENTAGE" ? "（%）" : "（NT$）"}
+            </label>
+            <input
+              type="number"
+              min="1"
+              value={discountValue}
+              onChange={(e) => setDiscountValue(e.target.value)}
+              placeholder={discountType === "PERCENTAGE" ? "1-100" : "例：50"}
+              className="min-h-[48px] w-full rounded-xl border border-gray-600 bg-gray-900 px-4 text-lg text-white placeholder:text-gray-500 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+            />
+          </div>
+        </div>
+
+        {formError && (
+          <p className="mt-4 text-base font-medium text-red-400">{formError}</p>
+        )}
+
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="mt-5 flex min-h-[48px] items-center gap-2 rounded-xl bg-amber-500 px-6 text-lg font-bold text-gray-900 shadow hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Plus size={22} aria-hidden="true" />
+          {isSubmitting ? "建立中..." : "新增優惠券"}
+        </button>
+      </form>
+
+      {isLoading && (
+        <p className="py-16 text-center text-2xl text-gray-300">
+          優惠券載入中...
+        </p>
+      )}
+
+      {!isLoading && error && (
+        <p className="py-16 text-center text-2xl text-red-400">{error}</p>
+      )}
+
+      {!isLoading && !error && coupons.length === 0 && (
+        <p className="py-16 text-center text-2xl text-gray-300">
+          目前尚未建立任何優惠券
+        </p>
+      )}
+
+      {!isLoading && !error && coupons.length > 0 && (
+        <div className="overflow-hidden rounded-2xl bg-gray-800 shadow-lg">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left">
+              <thead>
+                <tr className="border-b border-gray-700 bg-gray-800/80 text-base font-semibold text-gray-300">
+                  <th className="px-6 py-4">優惠碼</th>
+                  <th className="px-6 py-4">類型</th>
+                  <th className="px-6 py-4">折扣數值</th>
+                  <th className="px-6 py-4">狀態</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {coupons.map((coupon) => (
+                  <tr
+                    key={coupon.id}
+                    className="text-lg text-white odd:bg-gray-800 even:bg-gray-800/60 hover:bg-gray-700/60"
+                  >
+                    <td className="px-6 py-4 font-mono font-semibold tracking-wide">
+                      {coupon.code}
+                    </td>
+                    <td className="px-6 py-4">
+                      {DISCOUNT_TYPE_LABELS[coupon.discount_type] ?? coupon.discount_type}
+                    </td>
+                    <td className="px-6 py-4">
+                      {coupon.discount_type === "PERCENTAGE"
+                        ? `${coupon.discount_value}%`
+                        : `NT$ ${coupon.discount_value}`}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold ${
+                          coupon.is_active
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-gray-200 text-gray-600"
+                        }`}
+                      >
+                        {coupon.is_active ? "啟用中" : "已停用"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function MerchantDashboard() {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("orders");
+
+  const handleAuthError = useCallback(() => {
+    navigate("/auth", { state: { from: "/merchant" } });
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!localStorage.getItem("token")) {
+      handleAuthError();
+    }
+  }, [handleAuthError]);
+
+  return (
+    <div className="min-h-screen bg-gray-900">
+      <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-900/95 px-6 py-5 backdrop-blur">
+        <div className="mx-auto max-w-7xl">
+          <h1 className="text-3xl font-bold text-white">商家後台管理系統</h1>
+
+          <nav className="mt-5 flex flex-wrap gap-3">
+            {TABS.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex min-h-[52px] items-center gap-2 rounded-xl px-6 text-lg font-bold transition-colors ${
+                    isActive
+                      ? "bg-amber-500 text-gray-900 shadow"
+                      : "border border-gray-700 text-gray-300 hover:bg-gray-800"
+                  }`}
+                >
+                  <Icon size={22} aria-hidden="true" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        {activeTab === "orders" && (
+          <OrderBoardPanel onAuthError={handleAuthError} />
+        )}
+        {activeTab === "inventory" && (
+          <InventoryPanel onAuthError={handleAuthError} />
+        )}
+        {activeTab === "coupons" && (
+          <CouponPanel onAuthError={handleAuthError} />
+        )}
+      </main>
     </div>
   );
 }
