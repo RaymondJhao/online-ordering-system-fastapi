@@ -26,6 +26,8 @@ function Checkout() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const [paymentMethod, setPaymentMethod] = useState('ONLINE')
+  const [pickupTime, setPickupTime] = useState('')
+  const [couponCode, setCouponCode] = useState('')
 
   useEffect(() => {
     if (!localStorage.getItem('token')) {
@@ -56,6 +58,8 @@ function Checkout() {
           quantity: item.quantity,
         })),
         payment_method: paymentMethod,
+        pickup_time: pickupTime || undefined,
+        coupon_code: couponCode.trim() || undefined,
       })
 
       const orderId = orderRes.data.order.id
@@ -125,6 +129,30 @@ function Checkout() {
             <div className="mt-4 flex items-center justify-between border-t pt-4 text-lg font-bold text-gray-900">
               <span>總金額</span>
               <span>NT$ {totalPrice}</span>
+            </div>
+
+            <div className="mt-6 border-t pt-4">
+              <h2 className="mb-3 text-sm font-semibold text-gray-700">預約取餐時間</h2>
+              <input
+                type="datetime-local"
+                value={pickupTime}
+                onChange={(e) => setPickupTime(e.target.value)}
+                className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm text-gray-900 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+              />
+              <p className="mt-1 text-xs text-gray-400">
+                不填寫則預設盡快為您準備餐點
+              </p>
+            </div>
+
+            <div className="mt-6 border-t pt-4">
+              <h2 className="mb-3 text-sm font-semibold text-gray-700">優惠券</h2>
+              <input
+                type="text"
+                value={couponCode}
+                onChange={(e) => setCouponCode(e.target.value)}
+                placeholder="輸入優惠碼"
+                className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+              />
             </div>
 
             <div className="mt-6 border-t pt-4">
