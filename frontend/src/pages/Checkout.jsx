@@ -25,6 +25,7 @@ function Checkout() {
   const navigate = useNavigate()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState(null)
+  const [paymentMethod, setPaymentMethod] = useState('ONLINE')
 
   useEffect(() => {
     if (!localStorage.getItem('token')) {
@@ -54,9 +55,17 @@ function Checkout() {
           menu_item_id: item.id,
           quantity: item.quantity,
         })),
+        payment_method: paymentMethod,
       })
 
       const orderId = orderRes.data.order.id
+
+      if (paymentMethod === 'CASH') {
+        clearCart()
+        alert('訂單建立成功，請至現場付款取餐！')
+        navigate('/')
+        return
+      }
 
       const paymentRes = await axios.post(`/api/payment/checkout/${orderId}`)
 
@@ -118,6 +127,46 @@ function Checkout() {
               <span>NT$ {totalPrice}</span>
             </div>
 
+            <div className="mt-6 border-t pt-4">
+              <h2 className="mb-3 text-sm font-semibold text-gray-700">付款方式</h2>
+              <div className="flex gap-3">
+                <label
+                  className={`flex flex-1 cursor-pointer items-center justify-center rounded-xl border px-4 py-3 text-sm font-medium transition-colors ${
+                    paymentMethod === 'ONLINE'
+                      ? 'border-orange-500 bg-orange-50 text-orange-600'
+                      : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="payment_method"
+                    value="ONLINE"
+                    checked={paymentMethod === 'ONLINE'}
+                    onChange={() => setPaymentMethod('ONLINE')}
+                    className="sr-only"
+                  />
+                  線上刷卡
+                </label>
+                <label
+                  className={`flex flex-1 cursor-pointer items-center justify-center rounded-xl border px-4 py-3 text-sm font-medium transition-colors ${
+                    paymentMethod === 'CASH'
+                      ? 'border-orange-500 bg-orange-50 text-orange-600'
+                      : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="payment_method"
+                    value="CASH"
+                    checked={paymentMethod === 'CASH'}
+                    onChange={() => setPaymentMethod('CASH')}
+                    className="sr-only"
+                  />
+                  現場現金
+                </label>
+              </div>
+            </div>
+
             {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
 
             <button
@@ -126,7 +175,11 @@ function Checkout() {
               disabled={isSubmitting}
               className="mt-6 w-full rounded-full bg-orange-500 py-3 font-medium text-white shadow hover:bg-orange-600 transition-colors disabled:cursor-not-allowed disabled:bg-gray-300"
             >
-              {isSubmitting ? '處理中...' : '確認付款'}
+              {isSubmitting
+                ? '處理中...'
+                : paymentMethod === 'CASH'
+                  ? '確認建立訂單'
+                  : '確認付款'}
             </button>
           </div>
         )}
