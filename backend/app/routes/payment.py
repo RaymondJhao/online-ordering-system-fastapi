@@ -27,7 +27,7 @@ def checkout(order_id):
         return jsonify({"message": "僅限顧客付款"}), 403
 
     customer_id = int(get_jwt_identity())
-    order = Order.query.get(order_id)
+    order = db.session.get(Order, order_id)
 
     if order is None:
         return jsonify({"message": "訂單不存在"}), 404
@@ -76,7 +76,7 @@ def ecpay_callback():
 
     if data.get("RtnCode") == "1":
         order_id = data.get("CustomField1")
-        order = Order.query.get(int(order_id)) if order_id and order_id.isdigit() else None
+        order = db.session.get(Order, int(order_id)) if order_id and order_id.isdigit() else None
 
         if order is not None and order.payment_status == PaymentStatus.UNPAID:
             try:

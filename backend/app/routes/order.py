@@ -197,7 +197,7 @@ def create_order():
     except (TypeError, ValueError):
         return jsonify({"message": "merchant_id 格式錯誤"}), 400
 
-    if Merchant.query.get(merchant_id) is None:
+    if db.session.get(Merchant, merchant_id) is None:
         return jsonify({"message": "商家不存在"}), 404
 
     payment_method = data.get("payment_method", PaymentMethod.ONLINE.value)
@@ -396,7 +396,7 @@ def update_order_status(order_id):
         return jsonify({"message": "僅限商家操作"}), 403
 
     merchant_id = int(get_jwt_identity())
-    order = Order.query.get(order_id)
+    order = db.session.get(Order, order_id)
 
     if order is None:
         return jsonify({"message": "訂單不存在"}), 404
