@@ -22,6 +22,7 @@ def list_inventory():
                     {
                         "id": item.id,
                         "name": item.name,
+                        "description": item.description,
                         "price": float(item.price),
                         "stock": item.stock,
                         "is_active": item.is_active,

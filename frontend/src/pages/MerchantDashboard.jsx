@@ -23,6 +23,9 @@ import {
   Trash2,
   CircleCheck,
   Loader2,
+  Pencil,
+  Undo2,
+  MoreHorizontal,
 } from "lucide-react";
 
 const PAGE_SIZE = 8;
@@ -62,6 +65,12 @@ const STATUS_CONFIG = {
     badge: "bg-emerald-100 text-emerald-800 border border-emerald-300",
     cardAccent: "border-t-8 border-emerald-400",
   },
+  COMPLETED: {
+    label: "已完成",
+    icon: CheckCircle2,
+    badge: "bg-gray-200 text-gray-700 border border-gray-300",
+    cardAccent: "border-t-8 border-gray-300",
+  },
 };
 
 // 嚴格狀態轉移表（對齊後端 app/routes/order.py 的 ALLOWED_TRANSITIONS）：
@@ -91,13 +100,6 @@ const ACTIONS_BY_STATUS = {
       className: "bg-purple-600 hover:bg-purple-700 text-white",
       destructive: false,
     },
-    {
-      status: "CANCELLED",
-      label: "取消訂單",
-      icon: Ban,
-      className: "bg-gray-500 hover:bg-gray-600 text-white",
-      destructive: true,
-    },
   ],
   PREPARING: [
     {
@@ -106,13 +108,6 @@ const ACTIONS_BY_STATUS = {
       icon: BellRing,
       className: "bg-emerald-600 hover:bg-emerald-700 text-white",
       destructive: false,
-    },
-    {
-      status: "CANCELLED",
-      label: "取消訂單",
-      icon: Ban,
-      className: "bg-gray-500 hover:bg-gray-600 text-white",
-      destructive: true,
     },
   ],
   READY: [
@@ -126,15 +121,52 @@ const ACTIONS_BY_STATUS = {
   ],
 };
 
+// 危險操作（對齊後端 ALLOWED_TRANSITIONS）：作廢僅能從 ACCEPTED / PREPARING 發起，
+// 退款僅能從 COMPLETED 發起，因此依訂單目前狀態決定要顯示哪個選項；不在表中的
+// 狀態（例如 PENDING、READY）不會出現「更多選項」按鈕。
+const DANGER_ACTIONS_BY_STATUS = {
+  ACCEPTED: [
+    {
+      status: "CANCELLED",
+      label: "作廢訂單",
+      icon: Ban,
+      confirmTitle: "確定要作廢這筆訂單嗎？",
+      confirmDescription: "作廢後無法復原，顧客也會收到通知。",
+      confirmLabel: "確認作廢",
+    },
+  ],
+  PREPARING: [
+    {
+      status: "CANCELLED",
+      label: "作廢訂單",
+      icon: Ban,
+      confirmTitle: "確定要作廢這筆訂單嗎？",
+      confirmDescription: "作廢後無法復原，顧客也會收到通知。",
+      confirmLabel: "確認作廢",
+    },
+  ],
+  COMPLETED: [
+    {
+      status: "REFUNDED",
+      label: "退款",
+      icon: Undo2,
+      confirmTitle: "確定要退款這筆訂單嗎？",
+      confirmDescription: "退款後訂單狀態將標記為已退款，此操作無法復原，請確認款項已實際退回給顧客。",
+      confirmLabel: "確認退款",
+    },
+  ],
+};
+
 const REJECT_REASON_PRESETS = [
   "太忙，來不及製作",
   "缺料，無法供應",
   "其他原因",
 ];
 
-// 大螢幕只顯示「還需要人處理」的訂單，COMPLETED / REJECTED / CANCELLED / REFUNDED
-// 這些終態訂單不佔用看板版位。
-const ACTIVE_STATUSES = new Set(["PENDING", "ACCEPTED", "PREPARING", "READY"]);
+// 大螢幕只顯示「還需要人處理」或「剛完成、可能還需要退款」的訂單，
+// REJECTED / CANCELLED / REFUNDED 這些真正的終態訂單不佔用看板版位。
+const NEEDS_ACTION_STATUSES = new Set(["PENDING", "ACCEPTED", "PREPARING", "READY"]);
+const BOARD_VISIBLE_STATUSES = new Set([...NEEDS_ACTION_STATUSES, "COMPLETED"]);
 
 const DISCOUNT_TYPE_LABELS = {
   PERCENTAGE: "百分比折扣",
@@ -254,24 +286,18 @@ function RejectReasonModal({ order, isSubmitting, error, onConfirm, onClose }) {
   );
 }
 
-function ConfirmCancelModal({
-  order,
-  isSubmitting,
-  error,
-  onConfirm,
-  onClose,
-}) {
+function DangerConfirmModal({ order, action, isSubmitting, error, onConfirm, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
         <div className="flex items-center gap-3 text-red-600">
           <AlertTriangle size={32} aria-hidden="true" />
-          <h2 className="text-2xl font-bold">確定要取消這筆訂單嗎？</h2>
+          <h2 className="text-2xl font-bold">{action.confirmTitle}</h2>
         </div>
 
         <p className="mt-3 text-lg text-gray-700">
           訂單編號 <span className="font-bold">#{order.id}</span>
-          ，取消後無法復原，顧客也會收到通知。
+          ，{action.confirmDescription}
         </p>
 
         {error && (
@@ -293,7 +319,7 @@ function ConfirmCancelModal({
             disabled={isSubmitting}
             className="min-h-[48px] flex-1 rounded-xl bg-red-600 text-lg font-bold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
-            {isSubmitting ? "處理中..." : "確認取消"}
+            {isSubmitting ? "處理中..." : action.confirmLabel}
           </button>
         </div>
       </div>
@@ -301,9 +327,11 @@ function ConfirmCancelModal({
   );
 }
 
-function OrderCard({ order, isProcessing, onAction }) {
+function OrderCard({ order, isProcessing, onAction, onDangerAction }) {
+  const [isDangerRowOpen, setIsDangerRowOpen] = useState(false);
   const config = STATUS_CONFIG[order.status];
   const actions = ACTIONS_BY_STATUS[order.status] ?? [];
+  const dangerActions = DANGER_ACTIONS_BY_STATUS[order.status] ?? [];
 
   return (
     <div
@@ -371,23 +399,67 @@ function OrderCard({ order, isProcessing, onAction }) {
         </p>
       )}
 
-      {actions.length > 0 && (
-        <div className="flex flex-wrap gap-4 border-t border-gray-100 p-5">
-          {actions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <button
-                key={action.status}
-                type="button"
-                disabled={isProcessing}
-                onClick={() => onAction(order, action)}
-                className={`flex min-h-[48px] min-w-[48px] flex-1 items-center justify-center gap-2 rounded-xl px-4 text-lg font-bold shadow transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${action.className}`}
-              >
-                <Icon size={24} aria-hidden="true" />
-                {action.label}
-              </button>
-            );
-          })}
+      {(actions.length > 0 || dangerActions.length > 0) && (
+        <div className="border-t border-gray-100 p-5">
+          {actions.length > 0 && (
+            <div className="flex flex-wrap gap-4">
+              {actions.map((action) => {
+                const Icon = action.icon;
+                return (
+                  <button
+                    key={action.status}
+                    type="button"
+                    disabled={isProcessing}
+                    onClick={() => onAction(order, action)}
+                    className={`flex min-h-[48px] min-w-[48px] flex-1 items-center justify-center gap-2 rounded-xl px-4 text-lg font-bold shadow transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${action.className}`}
+                  >
+                    <Icon size={24} aria-hidden="true" />
+                    {action.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {dangerActions.length > 0 && (
+            <div className={actions.length > 0 ? "mt-4 border-t border-dashed border-gray-200 pt-4" : ""}>
+              {!isDangerRowOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setIsDangerRowOpen(true)}
+                  className="flex min-h-[48px] items-center gap-2 rounded-xl border border-gray-300 px-4 text-base font-semibold text-gray-400 hover:border-red-300 hover:text-red-500"
+                >
+                  <MoreHorizontal size={20} aria-hidden="true" />
+                  更多選項...
+                </button>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  {dangerActions.map((action) => {
+                    const Icon = action.icon;
+                    return (
+                      <button
+                        key={action.status}
+                        type="button"
+                        disabled={isProcessing}
+                        onClick={() => onDangerAction(order, action)}
+                        className="flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-xl border-2 border-red-200 px-4 text-base font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Icon size={18} aria-hidden="true" />
+                        {action.label}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setIsDangerRowOpen(false)}
+                    className="flex min-h-[48px] items-center justify-center rounded-xl px-4 text-base font-semibold text-gray-400 hover:bg-gray-100"
+                  >
+                    收起
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -429,13 +501,23 @@ function OrderBoardPanel({ onAuthError }) {
     return () => clearInterval(intervalRef.current);
   }, [fetchOrders]);
 
-  const activeOrders = orders
-    .filter((order) => ACTIVE_STATUSES.has(order.status))
-    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  // 仍需要人處理的訂單排在最前面（依建立時間由舊到新），已完成的訂單（僅為了
+  // 讓商家能夠對其操作退款）排在後面，避免蓋過真正待處理的工作佇列。
+  const visibleOrders = orders
+    .filter((order) => BOARD_VISIBLE_STATUSES.has(order.status))
+    .sort((a, b) => {
+      const aNeedsAction = NEEDS_ACTION_STATUSES.has(a.status);
+      const bNeedsAction = NEEDS_ACTION_STATUSES.has(b.status);
+      if (aNeedsAction !== bNeedsAction) return aNeedsAction ? -1 : 1;
+      return new Date(a.created_at) - new Date(b.created_at);
+    });
+  const needsActionCount = orders.filter((order) =>
+    NEEDS_ACTION_STATUSES.has(order.status),
+  ).length;
 
-  const pageCount = Math.max(Math.ceil(activeOrders.length / PAGE_SIZE), 1);
+  const pageCount = Math.max(Math.ceil(visibleOrders.length / PAGE_SIZE), 1);
   const safePage = Math.min(page, pageCount - 1);
-  const pagedOrders = activeOrders.slice(
+  const pagedOrders = visibleOrders.slice(
     safePage * PAGE_SIZE,
     safePage * PAGE_SIZE + PAGE_SIZE,
   );
@@ -473,13 +555,17 @@ function OrderBoardPanel({ onAuthError }) {
     submitStatusUpdate(order, action.status);
   };
 
+  const handleDangerAction = (order, action) => {
+    setPendingAction({ order, action });
+  };
+
   return (
     <>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <p className="text-lg text-gray-300">
           待處理總數：
           <span className="text-2xl font-bold text-amber-400">
-            {activeOrders.length}
+            {needsActionCount}
           </span>{" "}
           筆
         </p>
@@ -511,13 +597,13 @@ function OrderBoardPanel({ onAuthError }) {
         <p className="py-16 text-center text-2xl text-red-400">{error}</p>
       )}
 
-      {!isLoading && !error && activeOrders.length === 0 && (
+      {!isLoading && !error && visibleOrders.length === 0 && (
         <p className="py-16 text-center text-2xl text-gray-300">
           目前沒有需要處理的訂單
         </p>
       )}
 
-      {!isLoading && !error && activeOrders.length > 0 && (
+      {!isLoading && !error && visibleOrders.length > 0 && (
         <>
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
             {pagedOrders.map((order) => (
@@ -526,6 +612,7 @@ function OrderBoardPanel({ onAuthError }) {
                 order={order}
                 isProcessing={processingOrderId === order.id}
                 onAction={handleAction}
+                onDangerAction={handleDangerAction}
               />
             ))}
           </div>
@@ -570,23 +657,38 @@ function OrderBoardPanel({ onAuthError }) {
         />
       )}
 
-      {pendingAction?.action.status === "CANCELLED" && (
-        <ConfirmCancelModal
+      {(pendingAction?.action.status === "CANCELLED" ||
+        pendingAction?.action.status === "REFUNDED") && (
+        <DangerConfirmModal
           order={pendingAction.order}
+          action={pendingAction.action}
           isSubmitting={processingOrderId === pendingAction.order.id}
           error={modalError}
           onClose={closeModal}
-          onConfirm={() => submitStatusUpdate(pendingAction.order, "CANCELLED")}
+          onConfirm={() =>
+            submitStatusUpdate(pendingAction.order, pendingAction.action.status)
+          }
         />
       )}
     </>
   );
 }
 
-function AddMenuItemModal({ isSubmitting, error, onConfirm, onClose }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [price, setPrice] = useState("");
+function MenuItemFormModal({
+  title,
+  submitLabel,
+  submittingLabel,
+  initialValues,
+  isSubmitting,
+  error,
+  onConfirm,
+  onClose,
+}) {
+  const [name, setName] = useState(initialValues?.name ?? "");
+  const [description, setDescription] = useState(initialValues?.description ?? "");
+  const [price, setPrice] = useState(
+    initialValues?.price !== undefined ? String(initialValues.price) : "",
+  );
 
   const canSubmit = name.trim().length > 0 && Number(price) > 0 && !isSubmitting;
 
@@ -603,7 +705,7 @@ function AddMenuItemModal({ isSubmitting, error, onConfirm, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-        <h2 className="text-2xl font-bold text-gray-900">＋ 新增餐點</h2>
+        <h2 className="text-2xl font-bold text-gray-900">{title}</h2>
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-4">
           <div>
@@ -666,7 +768,7 @@ function AddMenuItemModal({ isSubmitting, error, onConfirm, onClose }) {
               className="flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-xl bg-amber-500 text-lg font-bold text-gray-900 hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-gray-300"
             >
               {isSubmitting && <Loader2 size={20} className="animate-spin" aria-hidden="true" />}
-              {isSubmitting ? "新增中..." : "確認新增"}
+              {isSubmitting ? submittingLabel : submitLabel}
             </button>
           </div>
         </form>
@@ -701,6 +803,9 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isSubmittingAdd, setIsSubmittingAdd] = useState(false);
   const [addError, setAddError] = useState(null);
+  const [editingItem, setEditingItem] = useState(null);
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+  const [editError, setEditError] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
   const [toast, setToast] = useState(null); // { type: "success" | "error", message }
 
@@ -725,6 +830,25 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
       setAddError(err.response?.data?.message ?? "新增餐點失敗，請稍後再試");
     } finally {
       setIsSubmittingAdd(false);
+    }
+  };
+
+  const handleUpdateItem = async (payload) => {
+    setIsSubmittingEdit(true);
+    setEditError(null);
+    try {
+      await axios.put(`/api/menu/${editingItem.id}`, payload);
+      setEditingItem(null);
+      await onRefresh();
+      showToast("success", `「${payload.name}」已更新`);
+    } catch (err) {
+      if (err.response?.status === 401) {
+        onAuthError();
+        return;
+      }
+      setEditError(err.response?.data?.message ?? "更新餐點失敗，請稍後再試");
+    } finally {
+      setIsSubmittingEdit(false);
     }
   };
 
@@ -804,13 +928,14 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
       {!isLoading && !error && items.length > 0 && (
         <div className="overflow-hidden rounded-2xl bg-gray-800 shadow-lg">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-left">
+            <table className="w-full min-w-[680px] text-left">
               <thead>
                 <tr className="border-b border-gray-700 bg-gray-800/80 text-base font-semibold text-gray-300">
                   <th className="px-6 py-4">餐點名稱</th>
                   <th className="px-6 py-4">單價</th>
                   <th className="px-6 py-4">目前庫存</th>
                   <th className="px-6 py-4">上架狀態</th>
+                  <th className="px-6 py-4">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700">
@@ -848,6 +973,19 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
                         </span>
                       </div>
                     </td>
+                    <td className="px-6 py-4">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditError(null);
+                          setEditingItem(item);
+                        }}
+                        className="flex min-h-[48px] items-center gap-2 rounded-xl border border-gray-600 px-4 text-base font-semibold text-white hover:bg-gray-700"
+                      >
+                        <Pencil size={18} aria-hidden="true" />
+                        編輯
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -857,11 +995,27 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
       )}
 
       {isAddModalOpen && (
-        <AddMenuItemModal
+        <MenuItemFormModal
+          title="＋ 新增餐點"
+          submitLabel="確認新增"
+          submittingLabel="新增中..."
           isSubmitting={isSubmittingAdd}
           error={addError}
           onConfirm={handleCreateItem}
           onClose={() => setIsAddModalOpen(false)}
+        />
+      )}
+
+      {editingItem && (
+        <MenuItemFormModal
+          title="編輯餐點"
+          submitLabel="儲存變更"
+          submittingLabel="更新中..."
+          initialValues={editingItem}
+          isSubmitting={isSubmittingEdit}
+          error={editError}
+          onConfirm={handleUpdateItem}
+          onClose={() => setEditingItem(null)}
         />
       )}
 

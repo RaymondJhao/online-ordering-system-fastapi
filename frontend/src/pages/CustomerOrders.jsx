@@ -109,6 +109,12 @@ function CustomerOrders() {
                   </span>
                 </div>
 
+                {order.status === 'REJECTED' && order.reject_reason && (
+                  <p className="mt-2 text-sm font-semibold text-red-500">
+                    訂單已取消，店家回覆：{order.reject_reason}
+                  </p>
+                )}
+
                 <ul className="mt-4 divide-y divide-gray-100 border-y border-gray-100">
                   {order.items.map((item) => (
                     <li
