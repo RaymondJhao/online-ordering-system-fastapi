@@ -19,6 +19,7 @@ from ..models import (
 )
 
 order_bp = Blueprint("order", __name__, url_prefix="/api/orders")
+merchant_order_bp = Blueprint("merchant_order", __name__, url_prefix="/api/merchant")
 
 VALID_STATUSES = {status.value for status in OrderStatus}
 VALID_PAYMENT_METHODS = {method.value for method in PaymentMethod}
@@ -35,6 +36,105 @@ ALLOWED_TRANSITIONS = {
     OrderStatus.CANCELLED: set(),
     OrderStatus.REFUNDED: set(),
 }
+
+
+def _parse_pickup_time(raw_pickup_time):
+    """回傳 (pickup_time, error_response)；未提供時回傳 (None, None)。"""
+    if not raw_pickup_time:
+        return None, None
+    try:
+        return datetime.fromisoformat(str(raw_pickup_time).replace("Z", "+00:00")), None
+    except ValueError:
+        return None, (jsonify({"message": "pickup_time 格式錯誤，請使用 ISO 8601 格式"}), 400)
+
+
+def _resolve_coupon(coupon_code, merchant_id):
+    """回傳 (coupon, error_response)；未提供優惠碼時回傳 (None, None)。"""
+    if not coupon_code:
+        return None, None
+    coupon = Coupon.query.filter_by(
+        code=coupon_code, merchant_id=merchant_id, is_active=True
+    ).first()
+    if coupon is None:
+        return None, (jsonify({"message": "優惠碼不存在、已停用，或不適用於此商家"}), 400)
+    return coupon, None
+
+
+def _parse_items(items):
+    """驗證 items 陣列格式，回傳 (parsed_items, error_response)。
+    parsed_items 是 [(menu_item_id, quantity), ...]。"""
+    parsed_items = []
+    for raw_item in items:
+        if not isinstance(raw_item, dict) or "menu_item_id" not in raw_item or "quantity" not in raw_item:
+            return None, (jsonify({"message": "items 陣列中每個項目需包含 menu_item_id 與 quantity"}), 400)
+
+        try:
+            menu_item_id = int(raw_item["menu_item_id"])
+            quantity = int(raw_item["quantity"])
+        except (TypeError, ValueError):
+            return None, (jsonify({"message": "menu_item_id 與 quantity 必須為整數"}), 400)
+
+        if quantity <= 0:
+            return None, (jsonify({"message": "quantity 必須為正整數"}), 400)
+
+        parsed_items.append((menu_item_id, quantity))
+
+    return parsed_items, None
+
+
+def _load_menu_items(parsed_items, merchant_id):
+    """依 merchant_id 撈出對應餐點，回傳 (menu_item_map, error_response)。"""
+    menu_item_ids = [menu_item_id for menu_item_id, _ in parsed_items]
+    menu_items = MenuItem.query.filter(
+        MenuItem.id.in_(menu_item_ids), MenuItem.merchant_id == merchant_id
+    ).all()
+    menu_item_map = {menu_item.id: menu_item for menu_item in menu_items}
+
+    if len(menu_item_map) != len(set(menu_item_ids)):
+        return None, (jsonify({"message": "部分餐點不存在，或不屬於指定的商家"}), 400)
+
+    return menu_item_map, None
+
+
+def _deduct_stock(parsed_items):
+    """原子扣庫存：不能先 SELECT 讀庫存再判斷再 UPDATE，兩個請求之間有空隙，
+    高併發下會超賣（race condition）。改用單一 SQL 語句，把「檢查庫存足夠」
+    跟「扣庫存」在資料庫層級合成同一個原子操作：WHERE 條件同時卡數量與 id，
+    若該列因為 stock 不足而沒被 WHERE 卡到，rowcount 就會是 0。
+    成功回傳 None，庫存不足時回傳 error_response。"""
+    for menu_item_id, quantity in parsed_items:
+        result = db.session.execute(
+            text(
+                "UPDATE menu_items SET stock = stock - :quantity "
+                "WHERE id = :id AND stock >= :quantity"
+            ),
+            {"quantity": quantity, "id": menu_item_id},
+        )
+        if result.rowcount == 0:
+            db.session.rollback()
+            return (
+                jsonify(
+                    {
+                        "message": f"餐點庫存不足，訂單建立失敗（menu_item_id={menu_item_id}）"
+                    }
+                ),
+                400,
+            )
+    return None
+
+
+def _apply_coupon_discount(total_price, coupon, order):
+    """依優惠券折抵，折扣金額不可超過購物車原始總價（避免出現負的訂單金額）。
+    回傳最終 discount_amount，並直接寫入 order.coupon_id。"""
+    discount_amount = 0
+    if coupon is not None:
+        if coupon.discount_type == DiscountType.PERCENTAGE:
+            discount_amount = int(total_price * coupon.discount_value / 100)
+        else:
+            discount_amount = coupon.discount_value
+        discount_amount = max(0, min(discount_amount, int(total_price)))
+        order.coupon_id = coupon.id
+    return discount_amount
 
 
 def serialize_order(order):
@@ -109,48 +209,21 @@ def create_order():
             400,
         )
 
-    pickup_time = None
-    raw_pickup_time = data.get("pickup_time")
-    if raw_pickup_time:
-        try:
-            pickup_time = datetime.fromisoformat(str(raw_pickup_time).replace("Z", "+00:00"))
-        except ValueError:
-            return jsonify({"message": "pickup_time 格式錯誤，請使用 ISO 8601 格式"}), 400
+    pickup_time, error_response = _parse_pickup_time(data.get("pickup_time"))
+    if error_response:
+        return error_response
 
-    coupon = None
-    coupon_code = data.get("coupon_code")
-    if coupon_code:
-        coupon = Coupon.query.filter_by(
-            code=coupon_code, merchant_id=merchant_id, is_active=True
-        ).first()
-        if coupon is None:
-            return jsonify({"message": "優惠碼不存在、已停用，或不適用於此商家"}), 400
+    coupon, error_response = _resolve_coupon(data.get("coupon_code"), merchant_id)
+    if error_response:
+        return error_response
 
-    # 驗證每個品項的格式與數量，並收集要查詢的 menu_item_id
-    parsed_items = []
-    for raw_item in items:
-        if not isinstance(raw_item, dict) or "menu_item_id" not in raw_item or "quantity" not in raw_item:
-            return jsonify({"message": "items 陣列中每個項目需包含 menu_item_id 與 quantity"}), 400
+    parsed_items, error_response = _parse_items(items)
+    if error_response:
+        return error_response
 
-        try:
-            menu_item_id = int(raw_item["menu_item_id"])
-            quantity = int(raw_item["quantity"])
-        except (TypeError, ValueError):
-            return jsonify({"message": "menu_item_id 與 quantity 必須為整數"}), 400
-
-        if quantity <= 0:
-            return jsonify({"message": "quantity 必須為正整數"}), 400
-
-        parsed_items.append((menu_item_id, quantity))
-
-    menu_item_ids = [menu_item_id for menu_item_id, _ in parsed_items]
-    menu_items = MenuItem.query.filter(
-        MenuItem.id.in_(menu_item_ids), MenuItem.merchant_id == merchant_id
-    ).all()
-    menu_item_map = {menu_item.id: menu_item for menu_item in menu_items}
-
-    if len(menu_item_map) != len(set(menu_item_ids)):
-        return jsonify({"message": "部分餐點不存在，或不屬於指定的商家"}), 400
+    menu_item_map, error_response = _load_menu_items(parsed_items, merchant_id)
+    if error_response:
+        return error_response
 
     # 由後端依資料庫單價計算總價，避免前端價格造假；Order、所有 OrderItem、
     # 庫存扣減與 IdempotencyRecord 都在同一個 session/transaction 內寫入，
@@ -175,41 +248,13 @@ def create_order():
                 OrderItem(menu_item_id=menu_item.id, quantity=quantity, price=unit_price)
             )
 
-        # 依優惠券折抵，折扣金額不可超過購物車原始總價（避免出現負的訂單金額）
-        discount_amount = 0
-        if coupon is not None:
-            if coupon.discount_type == DiscountType.PERCENTAGE:
-                discount_amount = int(total_price * coupon.discount_value / 100)
-            else:
-                discount_amount = coupon.discount_value
-            discount_amount = max(0, min(discount_amount, int(total_price)))
-            order.coupon_id = coupon.id
-
+        discount_amount = _apply_coupon_discount(total_price, coupon, order)
         order.discount_amount = discount_amount
         order.total_price = total_price - discount_amount
 
-        # 原子扣庫存：不能先 SELECT 讀庫存再判斷再 UPDATE，兩個請求之間有空隙，
-        # 高併發下會超賣（race condition）。改用單一 SQL 語句，把「檢查庫存足夠」
-        # 跟「扣庫存」在資料庫層級合成同一個原子操作：WHERE 條件同時卡數量與 id，
-        # 若該列因為 stock 不足而沒被 WHERE 卡到，rowcount 就會是 0。
-        for menu_item_id, quantity in parsed_items:
-            result = db.session.execute(
-                text(
-                    "UPDATE menu_items SET stock = stock - :quantity "
-                    "WHERE id = :id AND stock >= :quantity"
-                ),
-                {"quantity": quantity, "id": menu_item_id},
-            )
-            if result.rowcount == 0:
-                db.session.rollback()
-                return (
-                    jsonify(
-                        {
-                            "message": f"餐點庫存不足，訂單建立失敗（menu_item_id={menu_item_id}）"
-                        }
-                    ),
-                    400,
-                )
+        stock_error_response = _deduct_stock(parsed_items)
+        if stock_error_response:
+            return stock_error_response
 
         db.session.add(order)
         db.session.flush()  # 取得 order.id，讓存進 IdempotencyRecord 的回應內容是完整的
@@ -238,6 +283,85 @@ def create_order():
         return jsonify({"message": "訂單建立失敗，請稍後再試"}), 500
 
     return jsonify(response_body), 201
+
+
+@merchant_order_bp.route("/orders", methods=["POST"])
+@jwt_required()
+def create_merchant_order():
+    """商家在大螢幕手動建立現場／電話訂單：沒有顧客帳號，customer_id 一律為 null，
+    merchant_id 直接取自登入商家的身分，不必（也不能）由前端指定。"""
+    if get_jwt().get("role") != "merchant":
+        return jsonify({"message": "僅限商家操作"}), 403
+
+    merchant_id = int(get_jwt_identity())
+    data = request.get_json(silent=True) or {}
+
+    items = data.get("items")
+    if not isinstance(items, list) or len(items) == 0:
+        return jsonify({"message": "缺少必要欄位：items（且不可為空陣列）"}), 400
+
+    payment_method = data.get("payment_method", PaymentMethod.CASH.value)
+    if payment_method not in VALID_PAYMENT_METHODS:
+        return (
+            jsonify(
+                {"message": f"payment_method 必須為以下其中之一：{sorted(VALID_PAYMENT_METHODS)}"}
+            ),
+            400,
+        )
+
+    pickup_time, error_response = _parse_pickup_time(data.get("pickup_time"))
+    if error_response:
+        return error_response
+
+    coupon, error_response = _resolve_coupon(data.get("coupon_code"), merchant_id)
+    if error_response:
+        return error_response
+
+    parsed_items, error_response = _parse_items(items)
+    if error_response:
+        return error_response
+
+    menu_item_map, error_response = _load_menu_items(parsed_items, merchant_id)
+    if error_response:
+        return error_response
+
+    # 與顧客下單相同：Order、所有 OrderItem、庫存扣減都在同一個 session/transaction
+    # 內寫入，任何一步失敗都會整筆 rollback。
+    try:
+        total_price = 0
+        order = Order(
+            customer_id=None,
+            merchant_id=merchant_id,
+            total_price=0,
+            status=OrderStatus.PENDING,
+            payment_method=PaymentMethod(payment_method),
+            table_number=data.get("table_number"),
+            pickup_time=pickup_time,
+        )
+
+        for menu_item_id, quantity in parsed_items:
+            menu_item = menu_item_map[menu_item_id]
+            unit_price = menu_item.price
+            total_price += unit_price * quantity
+            order.order_items.append(
+                OrderItem(menu_item_id=menu_item.id, quantity=quantity, price=unit_price)
+            )
+
+        discount_amount = _apply_coupon_discount(total_price, coupon, order)
+        order.discount_amount = discount_amount
+        order.total_price = total_price - discount_amount
+
+        stock_error_response = _deduct_stock(parsed_items)
+        if stock_error_response:
+            return stock_error_response
+
+        db.session.add(order)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({"message": "訂單建立失敗，請稍後再試"}), 500
+
+    return jsonify({"message": "訂單建立成功", "order": serialize_order(order)}), 201
 
 
 @order_bp.route("", methods=["GET"])

@@ -135,8 +135,9 @@ class Order(db.Model):
     __tablename__ = "orders"
 
     id = db.Column(db.Integer, primary_key=True)
+    # 商家在大螢幕手動建立的現場／電話訂單沒有對應的顧客帳號，因此允許為空
     customer_id = db.Column(
-        db.Integer, db.ForeignKey("customers.id"), nullable=False
+        db.Integer, db.ForeignKey("customers.id"), nullable=True
     )
     merchant_id = db.Column(
         db.Integer, db.ForeignKey("merchants.id"), nullable=False

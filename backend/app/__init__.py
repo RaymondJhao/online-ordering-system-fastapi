@@ -27,7 +27,7 @@ def create_app(config_class=Config):
     from .routes.coupon import coupon_bp
     from .routes.inventory import inventory_bp
     from .routes.menu import menu_bp
-    from .routes.order import order_bp
+    from .routes.order import merchant_order_bp, order_bp
     from .routes.payment import payment_bp
 
     app.register_blueprint(auth_bp)
@@ -35,6 +35,7 @@ def create_app(config_class=Config):
     app.register_blueprint(inventory_bp)
     app.register_blueprint(menu_bp)
     app.register_blueprint(order_bp)
+    app.register_blueprint(merchant_order_bp)
     app.register_blueprint(payment_bp)
 
     # Flask 開發模式(debug=True)預設會啟用 reloader，實際上會啟動「監控」跟「工作」
