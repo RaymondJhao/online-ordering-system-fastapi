@@ -6,6 +6,7 @@ function Auth() {
   const navigate = useNavigate()
   const location = useLocation()
   const [mode, setMode] = useState('login')
+  const [role, setRole] = useState('customer')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -19,19 +20,30 @@ function Auth() {
     setSuccessMessage(null)
   }
 
+  const switchRole = (nextRole) => {
+    setRole(nextRole)
+    setError(null)
+    setSuccessMessage(null)
+  }
+
   const handleLogin = async () => {
     const res = await axios.post('/api/auth/login', {
-      role: 'customer',
+      role,
       email,
       password,
     })
     localStorage.setItem('token', res.data.access_token)
-    navigate(location.state?.from ?? '/', { replace: true })
+
+    if (role === 'merchant') {
+      navigate('/merchant', { replace: true })
+    } else {
+      navigate(location.state?.from ?? '/', { replace: true })
+    }
   }
 
   const handleRegister = async () => {
     await axios.post('/api/auth/register', {
-      role: 'customer',
+      role,
       name: username,
       email,
       password,
@@ -88,8 +100,39 @@ function Auth() {
           </button>
         </div>
 
+        <div className="mb-4 flex justify-center gap-2 text-sm">
+          <button
+            type="button"
+            onClick={() => switchRole('customer')}
+            className={`rounded-full px-4 py-1.5 font-medium transition-colors ${
+              role === 'customer'
+                ? 'bg-gray-900 text-white'
+                : 'bg-gray-100 text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            顧客
+          </button>
+          <button
+            type="button"
+            onClick={() => switchRole('merchant')}
+            className={`rounded-full px-4 py-1.5 font-medium transition-colors ${
+              role === 'merchant'
+                ? 'bg-gray-900 text-white'
+                : 'bg-gray-100 text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            商家
+          </button>
+        </div>
+
         <h1 className="mb-4 text-center text-xl font-bold text-gray-900">
-          {mode === 'login' ? '會員登入' : '會員註冊'}
+          {role === 'merchant'
+            ? mode === 'login'
+              ? '商家登入'
+              : '商家註冊'
+            : mode === 'login'
+              ? '會員登入'
+              : '會員註冊'}
         </h1>
 
         <form onSubmit={handleSubmit} className="space-y-4">
