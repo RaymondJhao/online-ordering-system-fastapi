@@ -3,6 +3,13 @@
 **專案**：online-ordering-system
 **範圍**：`backend/`（約 1,200 行 Python，7 個 blueprint、3 個測試檔）
 **日期**：2026-07-29
+**狀態**：**已完成**（Phase 0～5 全數執行完畢）
+
+> 這份文件是動手前寫下的計畫，刻意保留原貌不做事後修飾——包含當時的估時、
+> 預期的風險，以及後來證明判斷正確或錯誤的地方。
+>
+> **實際執行結果與計畫的差異**，記錄在文件末尾的〈執行後記〉。
+> 每個階段的決策細節請見 [ADR](adr/)，最終成果請見 [README](../README.md)。
 
 ---
 
@@ -287,3 +294,50 @@ Flask-SQLAlchemy 的 `db.session` 是 request-scoped 全域物件；async 改成
 2. **`MenuItem.orders` / `Order.menu_items` 兩個 association_proxy 目前有被使用嗎**？若無實際用途，async 遷移時建議直接移除。
 3. **前端 API 契約可否微調**？例如錯誤回應格式從 `{"message": ...}` 改為 FastAPI 慣例的 `{"detail": ...}`。維持現狀可行，但會需要一個自訂 exception handler。
 4. **Python 版本**可否升到 3.12？（目前 CI 為 3.10）
+
+---
+
+## 11. 執行後記
+
+計畫寫於動手前，這一節記錄實際執行後的差異。保留兩者對照，
+是因為「預估與實際的落差在哪」本身就是值得檢視的資訊。
+
+### 判斷正確的部分
+
+- **原生 ENUM 的 downgrade 問題**（§5 提到的風險）確實發生：
+  autogenerate 的 `downgrade()` 只 drop table 不 drop type，
+  `downgrade base` 後再 `upgrade head` 會失敗。已在首版 migration 手動補上。
+- **association_proxy 是死程式碼**（§10 待確認事項 2）：
+  `grep` 確認整個 `routes/` 與 `tests/` 都沒使用，直接移除。
+- **lazy loading 與 bcrypt 阻塞**（§5.1、§5.2）都如預期發生，
+  且都寫成了測試而非只留註解。
+- **DateTime 缺少時區**（§5.5）確實是既有 bug。
+
+### 判斷錯誤或不足的部分
+
+- **低估了「工具鏈本身的坑」。** 計畫只列了應用程式層的風險，
+  但實際卡最久的幾件事都在工具層：coverage 因 greenlet 而嚴重低估、
+  `fastapi-limiter` 的 API 已與文件不符、pytest-asyncio 的 fixture loop scope、
+  CRLF 讓每次 commit 變成全檔案重寫。這些都不在原本的風險清單裡。
+- **漏掉了一個既有 bug。** 計畫的§6 列了 8 個既有問題，但沒發現
+  「排程宣稱回補庫存卻沒做」與「拒絕訂單不回補庫存」。
+  這兩個是實際動手寫 Phase 3、4 時才浮現的——說明**逐行重寫比靜態盤點更能發現問題**。
+- **限流的方案評估過於樂觀。** §2 的對照表直接寫「用 fastapi-limiter」，
+  沒有先驗證該套件的現況。實際安裝後才發現 0.2 版已大改，最後改為自行實作。
+
+### 估時對照
+
+| 階段 | 計畫 | 實際感受 |
+|---|---|---|
+| Phase 0 基礎建設 | 0.5 天 | 接近，但多花在 CRLF 與專案複製決策 |
+| Phase 1 資料層 | 1.5 天 | 接近 |
+| Phase 2 認證 | 1.5 天 | 接近 |
+| Phase 3 業務路由 | 2.5 天 | 最大一塊，符合預期 |
+| Phase 4 周邊 | 1 天 | 略超，限流改為自行實作增加了工作量 |
+| Phase 5 收尾 | 0.5 天 | 接近 |
+
+### 最終數字
+
+- 測試：3 個檔案 → 10 個檔案、109 個測試、覆蓋率 93%
+- `routes/order.py` 505 行 → 路由 168 + service 339 + schema 111
+- 新增 6 則 ADR 記錄關鍵決策與代價

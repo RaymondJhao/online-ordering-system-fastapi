@@ -3,10 +3,14 @@
 > 一個模擬真實餐飲店家「線上點餐 + 到店自取」場景的全端專案，重點不在把 CRUD 做完，
 > 而在把**併發、資料一致性、金流串接、狀態機**這些餐飲/電商後台真正會踩到的坑，扎扎實實解決一遍。
 
-[![Backend CI](https://github.com/RaymondJhao/online-ordering-system/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/RaymondJhao/online-ordering-system/actions/workflows/backend-ci.yml)
-![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python&logoColor=white)
-![Flask](https://img.shields.io/badge/Flask-3.1-black?logo=flask&logoColor=white)
+<!-- 若 GitHub repo 名稱不同，請一併修改下方 badge 與連結中的 repo 路徑 -->
+[![Backend CI](https://github.com/RaymondJhao/online-ordering-system-fastapi/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/RaymondJhao/online-ordering-system-fastapi/actions/workflows/backend-ci.yml)
+![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![Tests](https://img.shields.io/badge/tests-109%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 ---
@@ -20,6 +24,12 @@
 
 這個專案是我用工程手法，把這些「行銷人最怕遇到的商業痛點」逐一解決的過程。
 
+**這個版本是 Flask 版的完整重寫。** 原始的 Flask 實作在
+[online-ordering-system](https://github.com/RaymondJhao/online-ordering-system)，
+本 repo 保留了完整的 git history，可以直接看到從 Flask 演進到 FastAPI 的軌跡。
+重寫的動機、取捨與過程中發現的既有缺陷，都記錄在
+[架構決策紀錄（ADR）](docs/adr/) 與 [遷移計畫](docs/fastapi-migration-plan.md)。
+
 **開發方式全公開**：本專案高度結合 **AI 輔助開發工具（Claude Code、Gemini）** 完成——
 但 AI 負責的是「加速」，不是「替我思考」。我的角色是精準拆解需求、下 Prompt 規劃資料表
 與 API 邊界、對 AI 產出的程式碼做 code review、追根究柢地除錯（例如 ECPay 簽章跟 .NET
@@ -30,14 +40,15 @@ URL encode 的編碼差異，就是人工比對官方文件一個字元一個字
 
 ## 🎯 這個專案在解決什麼商業問題
 
-| 商業痛點（行銷/營運視角）                                                      | 對應的工程手法                                                                                       |
-| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| 促銷活動衝流量時，同一份庫存被兩筆訂單同時搶走，導致超賣、客訴                 | 資料庫層級**原子扣減**（Atomic Decrement），用 rowcount 判斷成敗，而非「先讀庫存、程式判斷、再寫回」 |
-| 顧客網路延遲時連點兩次「送出訂單」，或手滑重複送出，導致重複建單、重複扣款     | 基於 **Idempotency-Key** 的冪等性設計，重送同一把 key 不會重複扣庫存                                 |
-| 商家後台把訂單狀態亂改（例如已完成的訂單被打回準備中），造成內外場資訊對不上   | 嚴格的**訂單狀態機**，用轉移表明確定義合法路徑，非法轉移一律拒絕並回傳 409                           |
-| 顧客下單後不去付款，庫存被「假裝要買」的訂單卡住，其他人明明看得到菜單卻買不到 | **APScheduler** 背景排程，每分鐘自動釋出逾時 15 分鐘未付款的訂單庫存                                 |
-| 顧客竄改前端金額欺騙後端                                                       | 後端**依資料庫單價重新計算**訂單總額，完全不信任前端傳來的價格                                       |
-| 惡意流量打爆下單/付款 API                                                      | **Flask-Limiter + Redis** 對關鍵端點做請求頻率限制                                                   |
+| 商業痛點（行銷/營運視角） | 對應的工程手法 |
+| --- | --- |
+| 促銷活動衝流量時，同一份庫存被兩筆訂單同時搶走，導致超賣、客訴 | 資料庫層級**原子扣減**，把「檢查庫存」與「扣減」合併成單一 UPDATE，用 `rowcount` 判斷成敗（[ADR 0005](docs/adr/0005-atomic-stock-deduction.md)） |
+| 顧客網路延遲時連點兩次「送出訂單」，導致重複建單、重複扣款 | 基於 **Idempotency-Key** 的冪等性設計，含「兩個相同 key 同時衝過檢查」的極端併發處理 |
+| 商家後台把訂單狀態亂改，造成內外場資訊對不上 | 嚴格的**訂單狀態機**，用轉移表明確定義合法路徑，非法轉移回 409 |
+| 顧客下單後不去付款，庫存被「假裝要買」的訂單卡住 | **背景排程**每分鐘釋出逾時 15 分鐘未付款的訂單庫存，多 worker 下用 Redis 分散式鎖確保只執行一次 |
+| 顧客竄改前端金額欺騙後端 | 後端**依資料庫單價重新計算**訂單總額，schema 根本不接受任何金額欄位 |
+| 惡意流量打爆下單/付款 API | **Redis 滑動視窗限流**，Lua 腳本確保計數與寫入的原子性（[ADR 0006](docs/adr/0006-custom-rate-limiter.md)） |
+| 使用者的 token 外洩後，攻擊者可以長期潛伏使用 | **Refresh token 輪替 + 重用偵測**，一旦偵測到舊 token 被重用即撤銷整條 token family（[ADR 0003](docs/adr/0003-self-implemented-jwt.md)） |
 
 ---
 
@@ -50,30 +61,35 @@ flowchart LR
         A2[商家後台：訂單 / 庫存 / 優惠券 / 手動 POS]
     end
 
-    subgraph API["Flask REST API"]
-        B1[Auth<br/>JWT + Blocklist]
-        B2[Order<br/>狀態機 + 冪等性]
-        B3[Menu / Inventory<br/>原子扣庫存]
-        B4[Coupon]
-        B5[Payment<br/>ECPay 串接]
+    subgraph API["FastAPI（ASGI, async）"]
+        direction TB
+        R[api/v1 路由層<br/>只處理 HTTP]
+        S[services 商業邏輯層<br/>可獨立單元測試]
+        M[models + schemas<br/>SQLAlchemy 2.0 / Pydantic v2]
+        R --> S --> M
     end
 
     subgraph Infra["基礎設施"]
-        C1[(MySQL)]
-        C2[(Redis<br/>Rate Limit)]
+        C1[(PostgreSQL 16<br/>asyncpg)]
+        C2[(Redis<br/>token 撤銷 / 限流 / 排程鎖)]
         C3[APScheduler<br/>逾時棄單自動釋庫存]
         C4[綠界 ECPay<br/>金流服務]
     end
 
     A1 -->|axios / JWT| API
     A2 -->|axios / JWT| API
-    B1 & B2 & B3 & B4 --> C1
-    B1 & B2 & B5 -.-> C2
-    B5 <-->|CheckMacValue 簽章| C4
+    M --> C1
+    S -.-> C2
+    S <-->|CheckMacValue 簽章| C4
     C3 --> C1
+    C3 -.->|分散式鎖| C2
 ```
 
-**訂單狀態機**（`ALLOWED_TRANSITIONS`，定義於 [`backend/app/routes/order.py`](backend/app/routes/order.py)）：
+**分層原則**：路由層只做三件事——呼叫 service、把領域例外轉成 HTTP 狀態碼、回傳序列化結果。
+所有商業規則都在 service 層，因此可以不透過 HTTP client 直接測試。
+
+**訂單狀態機**（`ALLOWED_TRANSITIONS`，定義於
+[`backend/app/services/order_service.py`](backend/app/services/order_service.py)）：
 
 ```mermaid
 stateDiagram-v2
@@ -96,67 +112,117 @@ stateDiagram-v2
 也可以是「`PENDING` 但 `PAID`」（線上刷卡已成功、商家尚未確認接單），
 兩條狀態線各自演進、互不阻塞，才符合實際餐飲場景的收銀邏輯。
 
+訂單進入 `REJECTED` / `CANCELLED` / `REFUNDED` 時，**佔用的庫存會自動回補**。
+
 ---
 
 ## 🔐 核心技術亮點
 
-### 1. 高併發防護與資料一致性
+### 1. 併發正確性（本專案最值得看的部分）
 
-- **原子扣庫存**：單一 SQL `UPDATE menu_items SET stock = stock - :q WHERE id = :id AND stock >= :q`，
-  靠 `rowcount` 判斷扣減是否成功，杜絕「讀取-判斷-寫入」中間的競態空隙。
-- **Idempotency-Key 冪等性**：下單 API 支援 `Idempotency-Key` header，重送同一把 key
-  直接回傳原本的建單結果；連「兩個相同 key 的請求同時衝過檢查」這種極端併發，
-  都用資料庫 unique constraint + `IntegrityError` 接住，確保絕不重複扣庫存。
-- **後端金額重算**：`total_price` 一律由後端依資料庫單價與優惠券規則重新計算，不信任前端傳來的任何金額欄位。
+原子扣庫存的正確性不是靠「我覺得這樣寫沒問題」，而是靠可重現的併發測試證明：
 
-### 2. 資安與權限控管（RBAC）
+| 測試情境 | 期望結果 |
+| --- | --- |
+| 庫存 5，20 個並行請求各訂 1 份 | 恰好成功 5 筆、庫存歸零、只建立 5 筆訂單 |
+| 庫存 10，15 個並行請求各訂 2 份 | 恰好成功 5 筆 |
+| 庫存 7，10 個並行請求各訂 3 份 | 成功 2 筆、剩 1 份，庫存不會變成負數 |
+| 相同 Idempotency-Key 的 5 個並行請求 | 只建立 1 筆訂單、庫存只扣一次 |
 
-- JWT（`Flask-JWT-Extended`）區分 `customer` / `merchant` 兩種角色 claim，關鍵端點皆檢查角色。
-- 每筆訂單操作都驗證「操作者是否為該筆訂單的擁有者」（`order.customer_id` / `order.merchant_id`
-  是否等於當前登入者），防止跨帳號存取他人訂單（IDOR）。
-- **JWT Blocklist 登出機制**：登出時將 token 的 `jti` 寫入 `TokenBlocklist` 資料表，
-  搭配 `token_in_blocklist_loader` 讓已登出的 token 立即失效，而非純無狀態、永遠有效到過期為止。
+這些測試**刻意不使用共用 session 的 fixture**——那樣所有操作跑在同一筆交易裡，
+天然沒有競爭，測了等於沒測。每個並行請求都有自己的連線與交易。
+
+有效性用**突變測試**確認過：把原子扣減換回「先讀再判斷再寫」，
+4 個測試中有 3 個立刻失敗。
+
+→ [`backend/tests/test_order_concurrency.py`](backend/tests/test_order_concurrency.py)
+
+### 2. 認證深度：refresh 輪替與重用偵測
+
+FastAPI 的 `OAuth2PasswordBearer` 只負責從標頭取出 token 字串並在 OpenAPI 宣告
+security scheme，token 怎麼簽、怎麼驗、怎麼撤銷都要自己實作。這一層做了：
+
+- **access 15 分鐘 / refresh 7 天**，兩者皆帶 `jti`、`typ` 與 `family_id`
+- **`typ` 欄位在驗證時檢查**——否則 refresh token 可直接當 access token 用，
+  等於把 15 分鐘的曝險窗口放大成 7 天
+- **`jwt.decode` 明確指定 algorithms**，擋下 `alg=none` 的 algorithm confusion
+- **重用偵測**：Redis 用白名單記錄有效的 refresh jti，以 `GETDEL` 原子取用；
+  取不到即判定 token 已外洩，撤銷整條 family，使用者與攻擊者一併登出
+- **登出同時撤銷 access 與 family**——只撤銷 access 是不夠的，
+  攻擊者持有 refresh token 下一秒就能換出新的
+
+11 個安全性測試涵蓋過期、簽章竄改、`alg=none`、typ 混用、重用偵測、登出即時失效。
 
 ### 3. 第三方金流整合（綠界 ECPay）
 
 - 完整實作 `CheckMacValue` 簽章演算法：參數排序 → 組字串 → URL encode → 修正
-  **.NET 與 Python URL encode 在 `-`、`_`、`.`、`!`、`*`、`(`、`)` 這幾個字元上的編碼差異** → SHA256 → 轉大寫。
-- `ReturnURL` callback 端點**驗證 `CheckMacValue` 確認請求真的來自綠界**，而非任何人偽造的假付款通知。
-- 用 `CustomField1` 可靠地帶回 `order_id`，不依賴解析 `MerchantTradeNo` 這種容易產生歧義的字串。
-- Callback 判斷 `payment_status == UNPAID` 才更新為 `PAID`，天然具備冪等性，可安全承受綠界的重複通知。
+  **.NET 與 Python URL encode 在 `-`、`_`、`.`、`!`、`*`、`(`、`)` 這幾個字元上的編碼差異**
+  → SHA256 → 轉大寫
+- Callback 端點沒有登入者，身分完全靠驗證 `CheckMacValue` 確認——
+  少了這道驗證，任何人都能自行 POST 一筆「付款成功」把訂單改成已付款
+- 用 `CustomField1` 帶回 `order_id`，不從 `MerchantTradeNo` 反推（id 與 timestamp
+  之間沒有分隔符，解析會有歧義）
+- 回應必須是純文字 `1|OK`，回 JSON 會讓綠界判定通知失敗並持續重送
 
-### 4. 系統穩定性與自動化
+### 4. 系統穩定性
 
-- **Flask-Limiter + Redis**：下單、結帳等關鍵端點做請求頻率限制；並實作「先嘗試連線 Redis，
-  連不上才 fallback 回 in-memory」的降級策略，避免 Redis 容器沒啟動就讓整個 API 掛掉。
-- **APScheduler 背景排程**：每分鐘掃描一次，將建立超過 15 分鐘仍 `PENDING` 且 `UNPAID`
-  的訂單自動轉為 `CANCELLED`，釋放被棄單佔用的庫存；排程邏輯包在 `app.app_context()` 內執行，
-  並處理了 Flask debug reloader 會啟動兩個 process 導致排程重複執行的問題。
+- **背景排程**：`AsyncIOScheduler` 由 lifespan 管理，每分鐘取消逾時未付款訂單並回補庫存。
+  多 worker 環境下用 **Redis 分散式鎖**（`SET NX EX`）確保同一輪只有一個 worker 執行
+- **限流**：Redis 滑動視窗，Lua 腳本保證原子性，回傳 `Retry-After` 與 `X-RateLimit-*`
+- **健康檢查**：`/health` 實際檢查資料庫與 Redis 連線，不通時回 503 而非 200——
+  只回報「行程還活著」的健康檢查無法讓編排系統察覺失效的實例
 
 ### 5. 測試與工程紀律
 
-- `pytest` 撰寫後端整合測試，涵蓋 Auth、Menu 與高併發下單情境（建單成功、庫存不足、
-  冪等性重送、狀態機非法跳躍防護）。
-- **GitHub Actions CI**：push / PR 到 `main` 自動安裝依賴並跑 `pytest`，而非僅靠人工在本機驗證。
-- **Swagger / OpenAPI 文件**（`flasgger`）：關鍵端點附有可互動的 API 文件，串接方不必逆向猜格式。
+- **109 個測試、93% 覆蓋率**，全部跑在真實 PostgreSQL 與 Redis 上而非模擬品
+  （[ADR 0004](docs/adr/0004-unify-on-postgres.md) 說明為什麼）
+- 測試資料庫結構由 **Alembic 建立**（`downgrade base` + `upgrade head`），
+  每次測試都順帶驗證 migration 可正確升級與回滾
+- **GitHub Actions CI**：ruff lint/format → pytest（含 Postgres + Redis service）
+  → `alembic check`（擋下 model 與 migration 不同步）→ Docker 建置與啟動 smoke test
+- **自動產生的 OpenAPI 3.1 文件**：從型別註記與 Pydantic model 產生，
+  與驗證邏輯結構上不可能漂移
+
+---
+
+## 🔄 從 Flask 遷移到 FastAPI
+
+這次重寫最大的收穫，是**逐行讀過舊程式碼時發現了四個原本就存在、卻沒被察覺的缺陷**：
+
+| 發現的問題 | 影響 |
+| --- | --- |
+| `DateTime` 欄位沒有 `timezone=True`，但存入 aware datetime | 時區資訊被丟棄，背景排程拿它跟 aware 的 cutoff 比較，在 Postgres 上直接拋 `TypeError`——排程形同虛設 |
+| 排程的 docstring 寫「把庫存釋放回去」，程式碼只有改狀態那一行 | 排程每跑一次，被取消訂單佔用的庫存就永久消失一次；它宣稱要解決的問題恰恰是它自己造成的 |
+| 拒絕／取消訂單時不回補庫存 | 商家每拒絕一筆訂單就永久少掉那些庫存 |
+| 測試 SQLite、開發 MySQL、正式 Postgres 三套並存 | 最需要被驗證的併發邏輯，恰好是測試最不可靠的部分 |
+
+其他遷移過程中處理的事：
+
+- `routes/order.py` 505 行 → 路由 168 + service 339 + schema 111，職責分離
+- 手寫的 60 行 flasgger YAML docstring → Pydantic model，文件與驗證不再各寫一次
+- `token_blocklist` 資料表（無清理機制、只增不減）→ Redis TTL 自動過期
+- 導入 Alembic（舊版靠 `db.create_all()`，schema 一旦有資料就無法變更）
+- 修掉「每次 commit 都變成全檔案重寫」的 CRLF 問題，git history 恢復可讀
+
+完整的遷移計畫與逐階段紀錄：[docs/fastapi-migration-plan.md](docs/fastapi-migration-plan.md)
 
 ---
 
 ## 🧰 技術棧
 
-| 分類           | 技術                                              |
-| -------------- | ------------------------------------------------- |
-| 後端語言／框架 | Python 3.10、Flask 3                              |
-| ORM／資料庫    | SQLAlchemy 2.0、MySQL 8（可替換 PostgreSQL）      |
-| 快取／限流     | Redis、Flask-Limiter                              |
-| 認證           | Flask-JWT-Extended、Flask-Bcrypt                  |
-| 背景任務       | APScheduler                                       |
-| 金流           | 綠界科技 ECPay（測試環境）                        |
-| API 文件       | Flasgger（Swagger UI）                            |
-| 測試／CI       | pytest、pytest-flask、GitHub Actions              |
-| 前端           | React 19、Vite、Tailwind CSS、React Router、Axios |
-| 前端測試       | Vitest、React Testing Library                     |
-| 容器化         | Docker Compose（MySQL + Redis）                   |
+| 分類 | 技術 |
+| --- | --- |
+| 後端語言／框架 | Python 3.12、FastAPI（ASGI, async） |
+| ORM／資料庫 | SQLAlchemy 2.0（async）、asyncpg、PostgreSQL 16、Alembic |
+| 快取／限流 | Redis（token 撤銷、滑動視窗限流、排程分散式鎖） |
+| 認證 | PyJWT + bcrypt 自行實作（refresh 輪替 + 重用偵測） |
+| 驗證／文件 | Pydantic v2、pydantic-settings、自動產生 OpenAPI 3.1 |
+| 背景任務 | APScheduler（AsyncIOScheduler） |
+| 金流 | 綠界科技 ECPay（測試環境） |
+| 測試／CI | pytest、pytest-asyncio、httpx、ruff、GitHub Actions |
+| 前端 | React 19、Vite、Tailwind CSS、React Router、Axios |
+| 前端測試 | Vitest、React Testing Library |
+| 容器化／部署 | Docker（多階段建置）、docker-compose、Render |
 
 ---
 
@@ -164,11 +230,18 @@ stateDiagram-v2
 
 想快速了解這個專案的技術深度，建議照這個順序看：
 
-1. [`backend/app/routes/order.py`](backend/app/routes/order.py) — 訂單狀態機、原子扣庫存、冪等性防護的核心
-2. [`backend/app/tasks.py`](backend/app/tasks.py) — APScheduler 自動釋庫存排程
-3. [`backend/app/utils/ecpay.py`](backend/app/utils/ecpay.py) — 綠界 CheckMacValue 簽章演算法
-4. [`backend/app/routes/payment.py`](backend/app/routes/payment.py) — 金流 callback 驗簽與冪等更新
-5. [`backend/tests/test_orders.py`](backend/tests/test_orders.py) — 高併發下單情境測試
+1. [`backend/tests/test_order_concurrency.py`](backend/tests/test_order_concurrency.py) —
+   併發下單測試，本專案最核心的正確性保證
+2. [`backend/app/services/stock_service.py`](backend/app/services/stock_service.py) —
+   原子扣庫存，含為什麼不能「先讀再判斷再寫」的完整說明
+3. [`backend/app/services/auth_service.py`](backend/app/services/auth_service.py) +
+   [`token_store.py`](backend/app/services/token_store.py) — refresh 輪替與重用偵測
+4. [`backend/app/services/order_service.py`](backend/app/services/order_service.py) —
+   訂單狀態機、冪等性、交易邊界
+5. [`backend/app/core/rate_limit.py`](backend/app/core/rate_limit.py) —
+   Redis Lua 滑動視窗限流
+6. [`backend/app/utils/ecpay.py`](backend/app/utils/ecpay.py) — 綠界 CheckMacValue 簽章
+7. [`docs/adr/`](docs/adr/) — 每個關鍵決策的取捨與代價
 
 ---
 
@@ -176,9 +249,9 @@ stateDiagram-v2
 
 ### 前置需求
 
-- Python 3.10+
+- Python 3.12+
 - Node.js 18+
-- Docker（用於啟動 MySQL / Redis，也可自行安裝本機服務）
+- Docker（用於啟動 PostgreSQL / Redis）
 
 ### 1. 啟動資料庫與 Redis
 
@@ -191,39 +264,84 @@ docker compose up -d
 
 ```bash
 cd backend
+
 python -m venv .venv
-.venv\Scripts\activate        # Windows；macOS/Linux 請用 source .venv/bin/activate
-pip install -r requirements.txt
+.venv\Scripts\activate            # Windows；macOS/Linux 用 source .venv/bin/activate
 
-cp .env.example .env          # 依需要調整 DATABASE_URL / REDIS_URL 等變數
+pip install -e ".[dev]"
 
-python app.py                 # 啟動時會自動建表；預設 http://localhost:5000
+cp .env.example .env              # 依說明填入 SECRET_KEY / JWT_SECRET_KEY
+# 產生金鑰：python -c "import secrets; print(secrets.token_urlsafe(48))"
+
+alembic upgrade head              # 建立資料表
+python -m scripts.seed            # 建立測試帳號與情境訂單（可重複執行）
+
+uvicorn app.main:app --reload     # http://localhost:8000
 ```
 
-- Swagger API 文件：`http://localhost:5000/apidocs`
-- 執行測試：`pytest`
+- 互動式 API 文件：`http://localhost:8000/docs`
+- 健康檢查：`http://localhost:8000/health`
+- 預設測試帳號：`merchant@test.com` / `customer@test.com`，密碼均為 `test1234`
 
-### 3. 前端
+> **注意**：`SECRET_KEY` 與 `JWT_SECRET_KEY` 沒有預設值，也拒絕 `change-me`
+> 這類佔位字串與長度不足 32 字元的值——沒設定就會直接啟動失敗。
+> 這是刻意的：舊版有 dev fallback，忘記設定的正式環境會用一組公開在 GitHub 上的金鑰簽 JWT。
+
+### 3. 執行測試
+
+```bash
+cd backend
+pytest                            # 109 個測試，需要 docker compose 已啟動
+pytest --cov --cov-report=term    # 含覆蓋率
+ruff check . && ruff format --check .
+```
+
+測試會先 `alembic downgrade base` 再 `upgrade head` 重建結構，
+因此**不要對著有重要資料的資料庫執行測試**。
+
+### 4. 前端
 
 ```bash
 cd frontend
 npm install
-npm run dev                   # 預設 http://localhost:5173
+npm run dev                       # http://localhost:5173
+npm test                          # 前端測試
 ```
 
-- 執行前端測試：`npm test`
+---
+
+## 🚢 部署
+
+`render.yaml` 定義了完整的 Render 部署（Web + PostgreSQL + Redis）：
+
+- 啟動指令為 `uvicorn`（FastAPI 是 ASGI，用 WSGI server 會直接失敗）
+- `preDeployCommand` 執行 `alembic upgrade head`
+- `healthCheckPath` 指向 `/health`
+- `SECRET_KEY` / `JWT_SECRET_KEY` 由平台自動產生
+
+雲端平台注入的 `DATABASE_URL` 是 `postgresql://`，async SQLAlchemy 需要
+`postgresql+asyncpg://`——`app/core/config.py` 會自動補上 driver，不需要額外設定。
+
+也提供多階段 `Dockerfile`（非 root 使用者、healthcheck、相依層可快取），
+CI 每次都會建置並做啟動 smoke test。
 
 ---
 
 ## 🗺️ 後續規劃（Roadmap）
 
-誠實列出目前的已知限制與下一步優化方向：
+誠實列出目前的已知限制與下一步方向：
 
-- [ ] 訂單列表分頁（目前為一次性回傳全部，累積量大後需優化）
+- [ ] 訂單列表分頁（目前一次性回傳全部，累積量大後需優化）
 - [ ] `OrderStatusLog` 稽核紀錄表，追蹤誰在何時把訂單改成什麼狀態
-- [ ] 優惠券模型補上使用次數上限、發放對象、起訖時間等欄位，支援行銷活動成效分析
-- [ ] `update_order_status` 加上樂觀鎖（版本欄位）或 `SELECT FOR UPDATE`，補齊與扣庫存一致的併發保護
-- [ ] 擴充測試覆蓋率：優惠券邊界情境、ECPay 驗簽失敗路徑、前端元件測試
+- [ ] 優惠券補上使用次數上限、發放對象、起訖時間，支援行銷活動成效分析
+- [ ] `update_order_status` 加上樂觀鎖，補齊與扣庫存一致的併發保護
+- [ ] 限流改以登入者 id 而非 IP 識別（目前同一個 NAT 後的使用者會共用計數器）
+- [ ] 結構化日誌與 request id，讓問題可以跨服務追蹤
+- [ ] 前端元件測試覆蓋率
+
+已完成（原 Roadmap 項目）：
+
+- [x] 擴充測試覆蓋率——109 個測試、93% 覆蓋率，含併發、優惠券邊界、ECPay 驗簽失敗路徑
 
 ---
 
