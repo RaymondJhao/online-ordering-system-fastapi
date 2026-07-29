@@ -74,6 +74,16 @@ jobs:
       # 測試不需要正式環境的雜湊強度，調低可讓整套測試快上數十倍
       BCRYPT_ROUNDS: "4"
 
+      # 限流的基準狀態必須是關閉的。下單 API 限制每分鐘 5 次，而多個測試會在
+      # 同一分鐘內重複下單，開著會讓它們互相干擾而隨機失敗。
+      # 需要驗證限流本身的測試會用 test_scheduler_and_limit.py 的 rate_limit_on
+      # fixture 個別打開。
+      RATE_LIMIT_ENABLED: "false"
+
+      # 背景排程會自動取消逾時未付款的訂單。測試期間讓它在背景改動資料，
+      # 只會製造無法重現的失敗。排程邏輯本身是直接呼叫 run_with_lock 來測的。
+      SCHEDULER_ENABLED: "false"
+
     steps:
       - uses: actions/checkout@v4
 
