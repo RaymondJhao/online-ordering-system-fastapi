@@ -8,8 +8,10 @@
 3. 狀態機防禦：商家不可將 PENDING 訂單直接改為 COMPLETED，應回傳 HTTP 409。
 """
 
+from decimal import Decimal
+
 from app.extensions import db
-from app.models import MenuItem, Order
+from app.models import Coupon, DiscountType, MenuItem, Order
 
 
 def test_create_order_success_with_pickup_time_and_coupon(client, init_db, customer_token):
@@ -97,6 +99,105 @@ def test_idempotency_key_prevents_duplicate_order(client, init_db, customer_toke
     assert Order.query.count() == 1
     refreshed_menu_item = db.session.get(MenuItem, menu_item.id)
     assert refreshed_menu_item.stock == 48
+
+
+def test_create_order_fails_with_invalid_coupon(client, init_db, customer_token):
+    """情境 A（優惠券失效）：帶入 is_active=False 或不存在的 coupon_code 下單，
+    應被系統擋下並回傳 400，且不能建立訂單、也不能扣庫存。"""
+    merchant = init_db["merchant"]
+    menu_item = init_db["menu_item"]
+
+    inactive_coupon = Coupon(
+        code="EXPIRED50",
+        discount_type=DiscountType.FIXED,
+        discount_value=50,
+        merchant_id=merchant.id,
+        is_active=False,
+    )
+    db.session.add(inactive_coupon)
+    db.session.commit()
+
+    # 已停用的優惠碼
+    inactive_response = client.post(
+        "/api/orders",
+        json={
+            "merchant_id": merchant.id,
+            "items": [{"menu_item_id": menu_item.id, "quantity": 1}],
+            "coupon_code": "EXPIRED50",
+        },
+        headers={"Authorization": f"Bearer {customer_token}"},
+    )
+    assert inactive_response.status_code == 400
+
+    # 根本不存在的優惠碼
+    nonexistent_response = client.post(
+        "/api/orders",
+        json={
+            "merchant_id": merchant.id,
+            "items": [{"menu_item_id": menu_item.id, "quantity": 1}],
+            "coupon_code": "DOES-NOT-EXIST",
+        },
+        headers={"Authorization": f"Bearer {customer_token}"},
+    )
+    assert nonexistent_response.status_code == 400
+
+    assert Order.query.count() == 0
+    refreshed_menu_item = db.session.get(MenuItem, menu_item.id)
+    assert refreshed_menu_item.stock == 50  # 庫存維持不變
+
+
+def test_create_order_fails_with_past_pickup_time(client, init_db, customer_token):
+    """情境 B（時空旅人）：帶入一個已經過去的 pickup_time 下單，
+    系統應防呆擋下並回傳 400，且不能建立訂單、也不能扣庫存。"""
+    merchant = init_db["merchant"]
+    menu_item = init_db["menu_item"]
+
+    response = client.post(
+        "/api/orders",
+        json={
+            "merchant_id": merchant.id,
+            "items": [{"menu_item_id": menu_item.id, "quantity": 1}],
+            "pickup_time": "2020-01-01T10:00:00",
+        },
+        headers={"Authorization": f"Bearer {customer_token}"},
+    )
+
+    assert response.status_code == 400
+    assert Order.query.count() == 0
+    refreshed_menu_item = db.session.get(MenuItem, menu_item.id)
+    assert refreshed_menu_item.stock == 50  # 庫存維持不變
+
+
+def test_create_order_fails_when_quantity_exceeds_exact_remaining_stock(
+    client, init_db, customer_token
+):
+    """情境 C（庫存極限邊界）：庫存剩 1 個，下單卻送出 quantity=2，
+    應被系統攔截並回傳 400，且不能建立訂單、也不能扣庫存。"""
+    merchant = init_db["merchant"]
+
+    low_stock_item = MenuItem(
+        merchant_id=merchant.id,
+        name="限量商品",
+        price=Decimal("80.00"),
+        description="庫存邊界測試用品項",
+        stock=1,
+    )
+    db.session.add(low_stock_item)
+    db.session.commit()
+
+    response = client.post(
+        "/api/orders",
+        json={
+            "merchant_id": merchant.id,
+            "items": [{"menu_item_id": low_stock_item.id, "quantity": 2}],
+        },
+        headers={"Authorization": f"Bearer {customer_token}"},
+    )
+
+    assert response.status_code == 400
+    assert Order.query.count() == 0
+    refreshed_item = db.session.get(MenuItem, low_stock_item.id)
+    assert refreshed_item.stock == 1  # 庫存維持不變，未被誤扣
 
 
 def test_merchant_cannot_skip_status_directly_to_completed(

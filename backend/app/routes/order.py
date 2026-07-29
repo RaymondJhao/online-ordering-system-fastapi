@@ -43,9 +43,17 @@ def _parse_pickup_time(raw_pickup_time):
     if not raw_pickup_time:
         return None, None
     try:
-        return datetime.fromisoformat(str(raw_pickup_time).replace("Z", "+00:00")), None
+        pickup_time = datetime.fromisoformat(str(raw_pickup_time).replace("Z", "+00:00"))
     except ValueError:
         return None, (jsonify({"message": "pickup_time 格式錯誤，請使用 ISO 8601 格式"}), 400)
+
+    # 防呆：pickup_time 不可為過去時間。輸入可能是 naive 或 aware datetime，
+    # 比較時要用同一種時區基準，否則 naive/aware 混比會直接丟 TypeError。
+    now = datetime.now(pickup_time.tzinfo) if pickup_time.tzinfo else datetime.now()
+    if pickup_time < now:
+        return None, (jsonify({"message": "pickup_time 不可為過去時間"}), 400)
+
+    return pickup_time, None
 
 
 def _resolve_coupon(coupon_code, merchant_id):
