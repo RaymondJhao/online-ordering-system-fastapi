@@ -1,5 +1,30 @@
+# 虛擬環境
 .venv/
+venv/
+env/
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 環境變數（含金鑰，絕不提交）
 .env
+.env.local
+
+# 測試與工具快取
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Flask 時期的殘留目錄
 instance/
+
+# 本機 SQLite
+*.db
+*.sqlite3

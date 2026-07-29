@@ -1,0 +1,97 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "online-ordering-system"
+version = "0.1.0"
+description = "線上點餐系統後端 API（FastAPI + async SQLAlchemy）"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+dependencies = [
+    # Web 框架
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.20",   # OAuth2 form 登入、綠界 callback 的 form-encoded body
+
+    # 資料層（全面 async）
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+
+    # 設定與驗證
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+
+    # 認證
+    "pyjwt>=2.10.0",
+    "bcrypt>=4.2.0",
+
+    # 快取／限流／背景排程
+    "redis>=5.2.0",
+    "fastapi-limiter>=0.1.6",
+    "apscheduler>=3.11.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.28.0",
+    "testcontainers[postgres]>=4.9.0",
+    "ruff>=0.8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# ---------------------------------------------------------------------------
+# Ruff：取代舊專案缺少的 lint 環節，CI 會跑 `ruff check` 與 `ruff format --check`
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["legacy", "alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle 錯誤
+    "W",     # pycodestyle 警告
+    "F",     # pyflakes
+    "I",     # isort：import 排序
+    "N",     # pep8-naming
+    "UP",    # pyupgrade：套用新版 Python 語法
+    "B",     # flake8-bugbear：常見陷阱
+    "C4",    # flake8-comprehensions
+    "SIM",   # flake8-simplify
+    "ASYNC", # flake8-async：async 專用檢查，會抓出 event loop 阻塞
+    "S",     # flake8-bandit：安全性檢查
+    "RUF",   # ruff 專屬規則
+]
+ignore = [
+    "E501",  # 行長由 formatter 處理
+    "B008",  # FastAPI 的 Depends() 必須寫在預設值，與此規則衝突
+    # RUF001~003 會把中文全形標點（，、「」）判定為「可能誤用的相似字元」。
+    # 本專案的註解與錯誤訊息刻意使用繁體中文，全形標點是正確寫法，故關閉。
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]  # 測試允許 assert 與寫死的假密碼
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
