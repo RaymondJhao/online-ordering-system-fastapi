@@ -20,6 +20,7 @@
 | 背景任務 | APScheduler（AsyncIOScheduler，由 lifespan 管理） |
 | 金流 | 綠界科技 ECPay（測試環境） |
 | API 文件 | FastAPI 自動產生 OpenAPI 3.1，路徑 `/docs` |
+| 部署 | Render（Web + Redis）、Vercel（前端）；限制與取捨見 [ADR 0007](../docs/adr/0007-free-tier-tradeoffs.md) |
 | 測試 | pytest + pytest-asyncio + httpx，跑在真實 Postgres 與 Redis 上 |
 | 品質 | ruff（lint + format）、coverage |
 
@@ -33,7 +34,7 @@ backend/
 │   ├── env.py                  # async 版設定，連線字串取自 Settings 而非寫死在 ini
 │   └── versions/
 ├── app/
-│   ├── main.py                 # FastAPI 實例、lifespan、/health
+│   ├── main.py                 # FastAPI 實例、lifespan、/health/live 與 /health/ready
 │   ├── core/                   # 與商業邏輯無關的基礎設施
 │   │   ├── config.py           # pydantic-settings，啟動即驗證，金鑰為必填
 │   │   ├── database.py         # async engine / sessionmaker / get_db 依賴
@@ -101,6 +102,7 @@ uvicorn app.main:app --reload
 | `RATE_LIMIT_ENABLED` | 測試時設 `false`，否則重複呼叫下單 API 的測試會互相干擾 |
 | `SCHEDULER_ENABLED` | 測試時設 `false` |
 | `CORS_ORIGINS` | JSON 陣列與逗號分隔兩種寫法都支援 |
+| `CORS_ORIGIN_REGEX` | 放行 Vercel preview 的隨機子網域，例如 `^https://xxx-[a-z0-9-]+\.vercel\.app$`。留空表示不啟用 |
 
 ---
 
@@ -176,6 +178,11 @@ SQLAlchemy 的 async 以 greenlet 實作，coverage 預設追蹤器在切換後�
 **測試出現 `RuntimeError: Event loop is closed`**
 連線池被 `lru_cache` 快取並綁在建立它的事件迴圈上，而每個測試各有一個迴圈。
 `conftest.py` 的 `_isolate_cached_connections` fixture 會在測試間清除快取。
+
+**健康檢查該用哪一個**
+`/health/live` 只確認行程存活、不碰任何相依服務，適合當作平台的 healthCheckPath
+與外部監控目標。`/health/ready` 會實際檢查資料庫與 Redis，不通時回 503。
+把平台的健康檢查指向 ready 會讓資料庫故障時整個服務陷入重啟迴圈。
 
 **排程沒有執行**
 確認 `SCHEDULER_ENABLED=true`。多 worker 環境下每輪只有一個 worker 會實際執行

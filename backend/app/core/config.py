@@ -14,6 +14,7 @@ import json
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal, Self
+from urllib.parse import parse_qsl, urlencode
 
 from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -73,6 +74,12 @@ class Settings(BaseSettings):
     # 會在 EnvSettingsSource 階段就拋 SettingsError，validator 根本不會被呼叫。
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
+    # Vercel 的 preview 部署是隨機子網域，固定清單比對不到，需要 regex。
+    # 例如：^https://online-ordering-[a-z0-9-]+\.vercel\.app$
+    # 留空表示不啟用。注意不要寫成過寬的 pattern（例如 .*\.vercel\.app），
+    # 那等於允許任何人的 Vercel 專案呼叫這個 API。
+    CORS_ORIGIN_REGEX: str = ""
+
     # --- 綠界 ECPay ---
     ECPAY_MERCHANT_ID: str = "2000132"
     ECPAY_HASH_KEY: str = "5294y06JbISpM5x9"
@@ -118,28 +125,55 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def _normalize_async_driver(cls, value: object) -> object:
-        """把同步的 Postgres driver 補成 asyncpg。
+        """把雲端平台給的連線字串正規化成 asyncpg 能用的形式。
 
-        雲端平台（Render、Heroku、Railway…）注入的連線字串一律是
-        `postgresql://` 或 `postgres://`，兩者對 async SQLAlchemy 都不可用，
-        啟動時會拋 `InvalidRequestError: The asyncio extension requires an
-        async driver`。這個錯誤訊息與「連線字串沒設對」看起來很像，
-        實務上很容易在部署當下卡很久。
+        處理兩件事：
 
-        在這裡統一正規化，等於讓平台的預設值直接可用。
+        **1. driver。** 雲端平台（Render、Heroku、Railway、Supabase、Neon…）
+        注入的一律是 `postgresql://` 或 `postgres://`，對 async SQLAlchemy 都不可用，
+        啟動時會拋 `InvalidRequestError: The asyncio extension requires an async
+        driver`。這個訊息與「連線字串沒設對」看起來很像，部署當下很容易卡住。
+
+        **2. libpq 專屬的查詢參數。** `sslmode`、`channel_binding` 這些是 libpq
+        （psycopg）的參數，**asyncpg 完全不認得，會直接拋錯**。多數平台的
+        「External / Direct connection string」都會附上 `?sslmode=require`。
+        這裡把它們濾掉，並在原本要求 SSL 時換成 asyncpg 認得的 `ssl=require`。
+
+        兩者都是「複製貼上平台給的字串就該能動」的體驗問題，
+        在設定層一次處理，比讓每個使用者各自踩一次好。
         """
-        if not isinstance(value, str):
+        if not isinstance(value, str) or "://" not in value:
             return value
 
-        for prefix in ("postgresql+asyncpg://", "postgresql+psycopg://"):
-            if value.startswith(prefix):
-                return value
+        scheme, _, rest = value.partition("://")
 
-        for legacy_prefix in ("postgresql://", "postgres://"):
-            if value.startswith(legacy_prefix):
-                return "postgresql+asyncpg://" + value[len(legacy_prefix) :]
+        # 只改寫同步 driver；已經指定 async driver 的原樣保留
+        if scheme in ("postgresql", "postgres"):
+            scheme = "postgresql+asyncpg"
 
-        return value
+        base, _, query = rest.partition("?")
+        if not query:
+            return f"{scheme}://{base}"
+
+        params = parse_qsl(query, keep_blank_values=True)
+        cleaned: list[tuple[str, str]] = []
+        require_ssl = False
+
+        for key, param_value in params:
+            lowered = key.lower()
+            if lowered == "sslmode":
+                # disable / allow / prefer 之外的模式都代表「要用 SSL」
+                require_ssl = param_value.lower() not in ("disable", "allow", "prefer")
+            elif lowered == "channel_binding":
+                continue  # asyncpg 不支援，直接丟棄
+            else:
+                cleaned.append((key, param_value))
+
+        if require_ssl and not any(k.lower() == "ssl" for k, _ in cleaned):
+            cleaned.append(("ssl", "require"))
+
+        rebuilt = urlencode(cleaned)
+        return f"{scheme}://{base}?{rebuilt}" if rebuilt else f"{scheme}://{base}"
 
     @field_validator("SECRET_KEY", "JWT_SECRET_KEY")
     @classmethod

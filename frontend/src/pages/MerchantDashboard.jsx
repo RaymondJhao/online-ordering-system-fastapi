@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
+import api, { tokenStorage } from "../lib/api";
+import { extractErrorMessage } from "../lib/errors";
 import {
   LayoutDashboard,
   Package,
@@ -36,11 +37,11 @@ function MerchantDashboard() {
 
   const handleLogout = async () => {
     try {
-      await axios.post("/api/auth/logout");
+      await api.post("/api/auth/logout");
     } catch (err) {
       // 忽略登出 API 失敗（例如 Token 已過期或網路異常），仍繼續清除本地登入狀態
     } finally {
-      localStorage.removeItem("token");
+      tokenStorage.clear();
       navigate("/auth", { state: { from: "/merchant" } });
     }
   };
@@ -49,7 +50,7 @@ function MerchantDashboard() {
   // 提到共同的祖先元件才能避免切換頁籤時重複打 API，POS 也才能立刻拿到最新庫存。
   const fetchInventory = useCallback(async () => {
     try {
-      const res = await axios.get("/api/inventory");
+      const res = await api.get("/api/inventory");
       setInventoryItems(res.data.items ?? []);
       setInventoryError(null);
       setInventoryUpdatedAt(new Date());
@@ -58,14 +59,14 @@ function MerchantDashboard() {
         handleAuthError();
         return;
       }
-      setInventoryError(err.response?.data?.message ?? "無法取得庫存資料，請稍後再試");
+      setInventoryError(extractErrorMessage(err, "無法取得庫存資料，請稍後再試"));
     } finally {
       setInventoryLoading(false);
     }
   }, [handleAuthError]);
 
   useEffect(() => {
-    if (!localStorage.getItem("token")) {
+    if (!tokenStorage.access) {
       handleAuthError();
       return;
     }

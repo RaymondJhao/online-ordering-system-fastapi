@@ -1,5 +1,6 @@
 import { useState } from "react";
-import axios from "axios";
+import api from "../../lib/api";
+import { extractErrorMessage } from "../../lib/errors";
 import {
   RefreshCw,
   Plus,
@@ -153,7 +154,7 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
     setIsSubmittingAdd(true);
     setAddError(null);
     try {
-      await axios.post("/api/menu", payload);
+      await api.post("/api/menu", payload);
       setIsAddModalOpen(false);
       await onRefresh();
       showToast("success", "餐點新增成功！");
@@ -162,7 +163,7 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
         onAuthError();
         return;
       }
-      setAddError(err.response?.data?.message ?? "新增餐點失敗，請稍後再試");
+      setAddError(extractErrorMessage(err, "新增餐點失敗，請稍後再試"));
     } finally {
       setIsSubmittingAdd(false);
     }
@@ -172,7 +173,7 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
     setIsSubmittingEdit(true);
     setEditError(null);
     try {
-      await axios.put(`/api/menu/${editingItem.id}`, payload);
+      await api.put(`/api/menu/${editingItem.id}`, payload);
       setEditingItem(null);
       await onRefresh();
       showToast("success", `「${payload.name}」已更新`);
@@ -181,7 +182,7 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
         onAuthError();
         return;
       }
-      setEditError(err.response?.data?.message ?? "更新餐點失敗，請稍後再試");
+      setEditError(extractErrorMessage(err, "更新餐點失敗，請稍後再試"));
     } finally {
       setIsSubmittingEdit(false);
     }
@@ -193,7 +194,7 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
   const handleToggleActive = async (item) => {
     setTogglingId(item.id);
     try {
-      await axios.put(`/api/menu/${item.id}`, { is_active: !item.is_active });
+      await api.put(`/api/menu/${item.id}`, { is_active: !item.is_active });
       await onRefresh();
       showToast("success", `已${item.is_active ? "下架" : "上架"}「${item.name}」`);
     } catch (err) {
@@ -201,7 +202,7 @@ function InventoryPanel({ items, isLoading, error, lastUpdatedAt, onRefresh, onA
         onAuthError();
         return;
       }
-      showToast("error", err.response?.data?.message ?? "更新上架狀態失敗，請稍後再試");
+      showToast("error", extractErrorMessage(err, "更新上架狀態失敗，請稍後再試"));
     } finally {
       setTogglingId(null);
     }

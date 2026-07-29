@@ -57,6 +57,15 @@ token 可以是 JWT、可以是查表用的隨機字串。FastAPI 只實作協�
 紀錄仍留在表裡永久累積，而且每次驗證都要查這張只增不減的表。
 Redis 的 TTL 讓紀錄在 token 自然到期時一併消失。
 
+> **更正（部署後補充）**：這份 ADR 原本寫「Redis 資料遺失的風險由 AOF 持久化
+> 涵蓋」，那句話在本機的 docker-compose 成立，但**在正式環境不成立**——
+> Render 免費方案的 Key Value 服務沒有持久化，重啟即資料全失。
+>
+> 實際的後果是：Redis 一被清空，所有 refresh token 都不在白名單上，
+> 下次換發會被判定為重用而撤銷整條 family，**全站使用者同時被強制登出**。
+> 方向上是 fail-safe（寧可誤殺不可放行），但這是既有設計的真實限制，
+> 不該被一句「有 AOF」帶過。詳見 [ADR 0007](0007-free-tier-tradeoffs.md)。
+
 **登出同時撤銷 access token 與整條 family。**
 只撤銷 access token 是不夠的：攻擊者若同時持有 refresh token，
 下一秒就能換出新的 access token，登出等於沒有效果。

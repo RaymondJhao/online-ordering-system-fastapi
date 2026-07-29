@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import axios from "axios";
+import api from "../../lib/api";
+import { extractErrorMessage } from "../../lib/errors";
 import { Plus } from "lucide-react";
 
 const DISCOUNT_TYPE_LABELS = {
@@ -19,7 +20,7 @@ function CouponPanel({ onAuthError }) {
 
   const fetchCoupons = useCallback(async () => {
     try {
-      const res = await axios.get("/api/coupons");
+      const res = await api.get("/api/coupons");
       setCoupons(res.data.coupons ?? []);
       setError(null);
     } catch (err) {
@@ -27,7 +28,7 @@ function CouponPanel({ onAuthError }) {
         onAuthError();
         return;
       }
-      setError(err.response?.data?.message ?? "無法取得優惠券資料，請稍後再試");
+      setError(extractErrorMessage(err, "無法取得優惠券資料，請稍後再試"));
     } finally {
       setIsLoading(false);
     }
@@ -52,7 +53,7 @@ function CouponPanel({ onAuthError }) {
 
     setIsSubmitting(true);
     try {
-      await axios.post("/api/coupons", {
+      await api.post("/api/coupons", {
         code: code.trim(),
         discount_type: discountType,
         discount_value: Number(discountValue),
@@ -65,7 +66,7 @@ function CouponPanel({ onAuthError }) {
         onAuthError();
         return;
       }
-      setFormError(err.response?.data?.message ?? "建立優惠券失敗，請稍後再試");
+      setFormError(extractErrorMessage(err, "建立優惠券失敗，請稍後再試"));
     } finally {
       setIsSubmitting(false);
     }

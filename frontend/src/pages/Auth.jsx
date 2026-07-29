@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api, { tokenStorage } from "../lib/api";
+import { extractErrorMessage } from "../lib/errors";
 
 function Auth() {
   const navigate = useNavigate()
@@ -27,12 +28,14 @@ function Auth() {
   }
 
   const handleLogin = async () => {
-    const res = await axios.post('/api/auth/login', {
+    const res = await api.post('/api/auth/login', {
       role,
       email,
       password,
     })
-    localStorage.setItem('token', res.data.access_token)
+    // 一併保存 refresh token：access token 只有 15 分鐘，
+    // 沒有它使用者每 15 分鐘就會被登出
+    tokenStorage.save(res.data)
 
     if (role === 'merchant') {
       navigate('/merchant', { replace: true })
@@ -42,7 +45,7 @@ function Auth() {
   }
 
   const handleRegister = async () => {
-    await axios.post('/api/auth/register', {
+    await api.post('/api/auth/register', {
       role,
       name: username,
       email,
@@ -66,7 +69,7 @@ function Auth() {
         await handleRegister()
       }
     } catch (err) {
-      setError(err.response?.data?.message ?? '發生錯誤，請稍後再試')
+      setError(extractErrorMessage(err, '發生錯誤，請稍後再試'))
     } finally {
       setIsSubmitting(false)
     }

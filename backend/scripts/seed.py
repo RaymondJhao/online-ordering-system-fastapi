@@ -6,15 +6,22 @@
 
 用法：
 
-    python -m scripts.seed                    # 使用預設測試帳號
-    python -m scripts.seed shop@example.com   # 指定商家帳號
+    python -m scripts.seed                      # 使用預設測試帳號
+    python -m scripts.seed shop@example.com     # 指定商家帳號
+    python -m scripts.seed --if-empty           # 資料庫已有資料就跳過
+
+`--if-empty` 是為了部署流程設計的：Render 免費方案的 PostgreSQL 每 30 天過期，
+重建後需要重新灌入結構與展示資料。把
+`alembic upgrade head && python -m scripts.seed --if-empty`
+放進 preDeployCommand，重建就只剩「貼上新的連線字串」這一步，
+而且每次正常部署都不會重複產生情境訂單。詳見 README 的部署章節。
 
 與舊版的差異：密碼雜湊改由 core/security 處理（model 上不再有 set_password），
 資料存取改為 async session。
 """
 
+import argparse
 import asyncio
-import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -168,13 +175,39 @@ async def create_scenario_orders(
     await db.flush()
 
 
+async def database_is_empty(db: AsyncSession) -> bool:
+    """判斷是否為全新的資料庫。
+
+    以「有沒有任何商家」為準：沒有商家就沒有餐點、沒有訂單，
+    整個系統等於空的。比逐張表檢查簡單，也不會因為新增資料表而失效。
+    """
+    return await db.scalar(select(Merchant.id).limit(1)) is None
+
+
 async def main() -> None:
-    merchant_email = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MERCHANT_EMAIL
+    parser = argparse.ArgumentParser(description="建立展示用測試資料")
+    parser.add_argument(
+        "merchant_email",
+        nargs="?",
+        default=DEFAULT_MERCHANT_EMAIL,
+        help="商家帳號，未指定時使用預設值",
+    )
+    parser.add_argument(
+        "--if-empty",
+        action="store_true",
+        help="資料庫已有資料就跳過（供部署流程使用，避免重複建立情境訂單）",
+    )
+    args = parser.parse_args()
 
     session_factory = get_sessionmaker()
     async with session_factory() as db:
+        if args.if_empty and not await database_is_empty(db):
+            print("資料庫已有資料，跳過 seed（--if-empty）")
+            await dispose_engine()
+            return
+
         print("建立測試資料…")
-        merchant = await get_or_create_merchant(db, merchant_email)
+        merchant = await get_or_create_merchant(db, args.merchant_email)
         customer = await get_or_create_customer(db, DEFAULT_CUSTOMER_EMAIL)
         items = await get_or_create_menu_items(db, merchant)
         await get_or_create_coupon(db, merchant)
@@ -183,7 +216,7 @@ async def main() -> None:
 
     await dispose_engine()
     print("\n完成。可用以下帳號登入：")
-    print(f"  商家 {merchant_email} / {DEFAULT_PASSWORD}")
+    print(f"  商家 {args.merchant_email} / {DEFAULT_PASSWORD}")
     print(f"  顧客 {DEFAULT_CUSTOMER_EMAIL} / {DEFAULT_PASSWORD}")
 
 

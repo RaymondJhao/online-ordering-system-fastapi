@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api, { tokenStorage } from "../lib/api";
+import { extractErrorMessage } from "../lib/errors";
 import { useCart } from '../context/CartContext'
 
 function redirectToECPay(paymentUrl, formData) {
@@ -30,7 +31,7 @@ function Checkout() {
   const [couponCode, setCouponCode] = useState('')
 
   useEffect(() => {
-    if (!localStorage.getItem('token')) {
+    if (!tokenStorage.access) {
       navigate('/auth', { state: { from: '/checkout' } })
     }
   }, [navigate])
@@ -38,7 +39,7 @@ function Checkout() {
   const handleConfirmPayment = async () => {
     setError(null)
 
-    if (!localStorage.getItem('token')) {
+    if (!tokenStorage.access) {
       navigate('/auth', { state: { from: '/checkout' } })
       return
     }
@@ -50,8 +51,8 @@ function Checkout() {
     setIsSubmitting(true)
 
     try {
-      // Authorization header 由全域 axios 攔截器（src/lib/axios.js）自動附加
-      const orderRes = await axios.post('/api/orders', {
+      // Authorization header 由 api 實例的攔截器（src/lib/api.js）自動附加
+      const orderRes = await api.post('/api/orders', {
         merchant_id: cart[0].merchant_id,
         items: cart.map((item) => ({
           menu_item_id: item.id,
@@ -71,14 +72,14 @@ function Checkout() {
         return
       }
 
-      const paymentRes = await axios.post(`/api/payment/checkout/${orderId}`)
+      const paymentRes = await api.post(`/api/payment/checkout/${orderId}`)
 
       const { payment_url, form_data } = paymentRes.data
 
       clearCart()
       redirectToECPay(payment_url, form_data)
     } catch (err) {
-      setError(err.response?.data?.message ?? '建立訂單或付款失敗，請稍後再試')
+      setError(extractErrorMessage(err, '建立訂單或付款失敗，請稍後再試'))
       setIsSubmitting(false)
     }
   }

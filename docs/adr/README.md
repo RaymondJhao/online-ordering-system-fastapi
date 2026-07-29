@@ -13,3 +13,4 @@
 | [0004](0004-unify-on-postgres.md) | 開發／測試／正式統一使用 PostgreSQL | 已採用 |
 | [0005](0005-atomic-stock-deduction.md) | 以資料庫層原子操作防止超賣 | 已採用 |
 | [0006](0006-custom-rate-limiter.md) | 自行實作 Redis 限流而非使用套件 | 已採用 |
+| [0007](0007-free-tier-tradeoffs.md) | 免費方案的部署取捨 | 已採用 |

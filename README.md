@@ -9,7 +9,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-109%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-117%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -280,7 +280,7 @@ uvicorn app.main:app --reload     # http://localhost:8000
 ```
 
 - 互動式 API 文件：`http://localhost:8000/docs`
-- 健康檢查：`http://localhost:8000/health`
+- 健康檢查：`/health/live`（只確認行程存活）、`/health/ready`（含資料庫與 Redis）
 - 預設測試帳號：`merchant@test.com` / `customer@test.com`，密碼均為 `test1234`
 
 > **注意**：`SECRET_KEY` 與 `JWT_SECRET_KEY` 沒有預設值，也拒絕 `change-me`
@@ -291,7 +291,7 @@ uvicorn app.main:app --reload     # http://localhost:8000
 
 ```bash
 cd backend
-pytest                            # 109 個測試，需要 docker compose 已啟動
+pytest                            # 117 個測試，需要 docker compose 已啟動
 pytest --cov --cov-report=term    # 含覆蓋率
 ruff check . && ruff format --check .
 ```
@@ -304,23 +304,109 @@ ruff check . && ruff format --check .
 ```bash
 cd frontend
 npm install
+cp .env.example .env.local        # 本機開發保持 VITE_API_BASE_URL 留空即可
 npm run dev                       # http://localhost:5173
 npm test                          # 前端測試
 ```
+
+本機開發時 `VITE_API_BASE_URL` 留空，所有請求走相對路徑並由 Vite 的
+dev proxy 轉發到 `http://localhost:8000`，因此不會有跨網域問題。
 
 ---
 
 ## 🚢 部署
 
-`render.yaml` 定義了完整的 Render 部署（Web + PostgreSQL + Redis）：
+前端在 **Vercel**，後端與 Redis 在 **Render**，資料庫用 Render PostgreSQL——
+全部都是免費方案。這帶來三個實際的限制，處理方式與取捨完整記錄在
+[ADR 0007](docs/adr/0007-free-tier-tradeoffs.md)。
+
+### 已知限制（誠實說明）
+
+| 限制 | 影響 | 本專案的處理 |
+|---|---|---|
+| Render Web Service 閒置 15 分鐘休眠 | 首位訪客需等 30–60 秒 | **刻意不做定時保溫**，改為進站即背景預熱 + 明確的等待提示（見下） |
+| Render PostgreSQL 30 天到期 | 需手動重建，資料全失 | 重建流程自動化至只剩貼上連線字串（見下） |
+| Render Redis 無持久化 | 重啟即清空 | **未解決**。Redis 一被清空，所有 refresh token 會被判定為重用而撤銷，全站使用者同時登出 |
+
+第三點沒有在免費方案內的解法。真正的做法是付費的持久化 Redis，
+或把 refresh 白名單搬回資料庫（代價是失去 TTL 自動清理）。這裡選擇接受並記錄，
+而不是假裝它不存在。
+
+### 為什麼不做保溫
+
+Render 免費方案每月 750 instance hours，而一個月有 730 小時——24 小時保溫
+會用掉幾乎全部額度。這是求職作品集，生命週期以月計算，
+為一個註定會被閒置的展示站長期佔用額度並不划算。
+
+既然接受冷啟動，就把它處理得體面：
+
+- `App` 掛載時立刻在背景打 `/health/live` 預熱，使用者瀏覽菜單時後端已在啟動
+- 等待超過 2 秒才顯示提示，避免熱機時閃一下反而干擾
+- 明確告知「約需 30–60 秒，此為免費方案的休眠機制，非系統異常」
+- axios timeout 設為 90 秒，否則第一個請求會在服務醒來前就失敗
+
+### 後端（Render）
+
+`render.yaml` 定義了 Web Service 與 Redis：
 
 - 啟動指令為 `uvicorn`（FastAPI 是 ASGI，用 WSGI server 會直接失敗）
-- `preDeployCommand` 執行 `alembic upgrade head`
-- `healthCheckPath` 指向 `/health`
+- `preDeployCommand` 執行 `alembic upgrade head && python -m scripts.seed --if-empty`
+- `healthCheckPath` 指向 **`/health/live`** 而非 `/health`——若健康檢查在資料庫
+  不通時回 503，Render 會判定實例不健康而反覆重啟，而免費資料庫每 30 天
+  就有一段重建空窗期
 - `SECRET_KEY` / `JWT_SECRET_KEY` 由平台自動產生
 
-雲端平台注入的 `DATABASE_URL` 是 `postgresql://`，async SQLAlchemy 需要
-`postgresql+asyncpg://`——`app/core/config.py` 會自動補上 driver，不需要額外設定。
+`render.yaml` **刻意不宣告 `databases:`**：免費資料庫重建後連線字串會改變，
+用 `fromDatabase` 綁定會讓 blueprint 與實際資料庫的對應關係斷掉。
+資料庫改為手動建立，`DATABASE_URL` 設為 `sync: false`。
+
+需要手動填入的環境變數：`DATABASE_URL`、`CORS_ORIGINS`、`CORS_ORIGIN_REGEX`、
+以及四個 `ECPAY_*`。
+
+### 🔁 每 30 天的資料庫重建 SOP
+
+Render 免費 PostgreSQL 建立後 30 天到期，之後有 14 天寬限期，逾期資料刪除。
+**建議在行事曆設一個每 28 天的提醒**——失敗模式是靜默的，
+招募方看到錯誤頁不會寫信告訴你。
+
+1. Render Dashboard → **New → PostgreSQL**，選 Free，記下建立日期
+2. 進入新資料庫 → 複製 **Internal Database URL**
+3. 到 `ordering-backend` 的 **Environment** → 把 `DATABASE_URL` 換成新的值 → Save
+4. 存檔會自動觸發重新部署，`preDeployCommand` 會：
+   - `alembic upgrade head` 建立所有資料表
+   - `python -m scripts.seed --if-empty` 灌入展示帳號與情境訂單
+5. 部署完成後打開 `/health/ready` 確認 `database` 與 `redis` 都是 `ok`
+6. 刪除舊的資料庫
+
+整個流程約 3 分鐘，不需要 shell，也不需要在本機做任何事。
+
+`--if-empty` 讓 seed 對一般部署毫無作用（資料庫有資料就跳過），
+只有重建後的第一次部署會實際執行——因此這行可以永遠留在 `preDeployCommand` 裡。
+
+### 前端（Vercel）
+
+`vercel.json` 已設定好 build 指令、輸出目錄與 SPA rewrites
+（少了 rewrites，直接開啟 `/merchant` 或重新整理會得到 404）。
+
+部署時**必須設定** `VITE_API_BASE_URL` 環境變數指向後端網址，例如
+`https://ordering-backend.onrender.com`。沒設定的話 `/api/orders` 會打到
+Vercel 自己的網域而得到 404。
+
+對應地，後端的 `CORS_ORIGINS` 要加入 Vercel 的正式網域。
+若也想讓 PR 的 preview 部署能運作，再設定 `CORS_ORIGIN_REGEX`，例如
+`^https://online-ordering-[a-z0-9-]+\.vercel\.app$`——
+preview 是隨機子網域，固定清單比對不到。
+
+### 連線字串的自動正規化
+
+雲端平台注入的 `DATABASE_URL` 是 `postgresql://`，還常附帶 `?sslmode=require`。
+前者讓 async SQLAlchemy 拋「The asyncio extension requires an async driver」，
+後者讓 asyncpg 拒絕未知參數——兩個錯誤訊息都很像「連線字串填錯」。
+
+`app/core/config.py` 會自動補上 asyncpg driver 並清掉 libpq 專屬參數，
+因此平台給的字串可以直接複製貼上。這件事在每 30 天重建時特別有感。
+
+### Docker
 
 也提供多階段 `Dockerfile`（非 root 使用者、healthcheck、相依層可快取），
 CI 每次都會建置並做啟動 smoke test。
@@ -338,10 +424,12 @@ CI 每次都會建置並做啟動 smoke test。
 - [ ] 限流改以登入者 id 而非 IP 識別（目前同一個 NAT 後的使用者會共用計數器）
 - [ ] 結構化日誌與 request id，讓問題可以跨服務追蹤
 - [ ] 前端元件測試覆蓋率
+- [ ] 持久化的 Redis——目前免費方案重啟即清空，會導致全站使用者被登出
+- [ ] 若專案需要長期營運，資料庫應改用無 30 天限制的方案並重新評估保溫策略
 
 已完成（原 Roadmap 項目）：
 
-- [x] 擴充測試覆蓋率——109 個測試、93% 覆蓋率，含併發、優惠券邊界、ECPay 驗簽失敗路徑
+- [x] 擴充測試覆蓋率——117 個測試、93% 覆蓋率，含併發、優惠券邊界、ECPay 驗簽失敗路徑
 
 ---
 

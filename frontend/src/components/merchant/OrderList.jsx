@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import axios from "axios";
+import api from "../../lib/api";
+import { extractErrorMessage } from "../../lib/errors";
 import {
   Clock,
   CheckCircle2,
@@ -456,7 +457,7 @@ function OrderList({ onAuthError }) {
 
   const fetchOrders = useCallback(async () => {
     try {
-      const res = await axios.get("/api/orders");
+      const res = await api.get("/api/orders");
       setOrders(res.data.orders ?? []);
       setError(null);
       setLastUpdatedAt(new Date());
@@ -465,7 +466,7 @@ function OrderList({ onAuthError }) {
         onAuthError();
         return;
       }
-      setError(err.response?.data?.message ?? "無法取得訂單資料，請稍後再試");
+      setError(extractErrorMessage(err, "無法取得訂單資料，請稍後再試"));
     } finally {
       setIsLoading(false);
     }
@@ -509,7 +510,7 @@ function OrderList({ onAuthError }) {
     setModalError(null);
 
     try {
-      await axios.put(`/api/orders/${order.id}/status`, {
+      await api.put(`/api/orders/${order.id}/status`, {
         status: targetStatus,
         ...(rejectReason ? { reject_reason: rejectReason } : {}),
       });
@@ -517,7 +518,7 @@ function OrderList({ onAuthError }) {
       await fetchOrders();
     } catch (err) {
       setModalError(
-        err.response?.data?.message ?? "更新訂單狀態失敗，請稍後再試",
+        extractErrorMessage(err, "更新訂單狀態失敗，請稍後再試"),
       );
     } finally {
       setProcessingOrderId(null);

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import axios from "axios";
+import api from "../../lib/api";
+import { extractErrorMessage } from "../../lib/errors";
 import { ShoppingCart, Plus, Minus, Trash2 } from "lucide-react";
 
 function ManualOrderForm({ inventoryItems, onAuthError, onOrderCreated }) {
@@ -65,7 +66,7 @@ function ManualOrderForm({ inventoryItems, onAuthError, onOrderCreated }) {
 
     setIsSubmitting(true);
     try {
-      await axios.post("/api/merchant/orders", {
+      await api.post("/api/merchant/orders", {
         items: cart.map((item) => ({
           menu_item_id: item.id,
           quantity: item.quantity,
@@ -83,7 +84,7 @@ function ManualOrderForm({ inventoryItems, onAuthError, onOrderCreated }) {
         onAuthError();
         return;
       }
-      setError(err.response?.data?.message ?? "建立訂單失敗，請稍後再試");
+      setError(extractErrorMessage(err, "建立訂單失敗，請稍後再試"));
     } finally {
       setIsSubmitting(false);
     }

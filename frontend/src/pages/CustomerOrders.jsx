@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api, { tokenStorage } from "../lib/api";
 
 const STATUS_LABELS = {
   PENDING: '待商家確認',
@@ -39,7 +39,7 @@ function CustomerOrders() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
+    const token = tokenStorage.access
     if (!token) {
       navigate('/auth', { state: { from: '/orders' } })
       return

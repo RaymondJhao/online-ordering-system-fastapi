@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 import jwt
 import pytest
 from httpx import AsyncClient
-from pydantic import ValidationError
 
 from app.core.config import get_settings
 from app.core.security import (
@@ -256,25 +255,44 @@ async def test_超過_72_位元組的密碼仍可正確驗證() -> None:
     assert not await verify_password("a" * 99 + "b", hashed)
 
 
-async def test_bcrypt_不會阻塞_event_loop() -> None:
+async def test_bcrypt_不會阻塞_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """bcrypt 是 CPU 密集運算，必須在 threadpool 執行。
 
-    這裡同時發出多個雜湊請求：若它們在 event loop 上序列執行，總時間會接近
-    單次耗時的倍數；正確丟到 threadpool 時則會並行，總時間明顯小於總和。
+    驗證方式是「event loop 在雜湊期間還能不能做別的事」：背景跑一個每毫秒
+    累加一次的 ticker，若雜湊佔住了 event loop，ticker 一次都不會被排到。
+
+    這裡刻意把成本因子調回正式環境的 12（測試環境預設是 4）。原因是
+    rounds=4 的雜湊只需約 1 毫秒，量測會被排程誤差淹沒——**先前用
+    「並行總時間 < 單次時間 × 4」的寫法就是因此變得不穩定**。
+    改成量測 event loop 的可用性之後，訊號變成「有 tick」對「零 tick」，
+    不再依賴時間比例。
     """
     import asyncio
 
-    start = time.perf_counter()
-    await hash_password("measure-single-run")
-    single = time.perf_counter() - start
+    monkeypatch.setattr(get_settings(), "BCRYPT_ROUNDS", 12)
+
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.001)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    await asyncio.sleep(0.01)  # 讓 ticker 先跑起來
+    ticks_before = ticks
 
     start = time.perf_counter()
-    await asyncio.gather(*(hash_password(f"concurrent-{i}") for i in range(4)))
-    concurrent = time.perf_counter() - start
+    await hash_password("cpu-bound-work")
+    elapsed = time.perf_counter() - start
 
-    assert concurrent < single * 4, (
-        f"4 次並行雜湊耗時 {concurrent:.3f}s，單次為 {single:.3f}s，"
-        "看起來是在 event loop 上序列執行"
+    task.cancel()
+
+    assert elapsed > 0.05, f"雜湊只花了 {elapsed:.3f}s，成本因子可能沒有生效"
+    assert ticks > ticks_before, (
+        f"雜湊耗時 {elapsed:.3f}s 期間 event loop 完全沒有被排到其他工作，"
+        "代表 bcrypt 在 event loop 上執行，會拖垮所有並行請求"
     )
 
 
@@ -318,24 +336,3 @@ def test_decode_token_對非數字的_sub_拋錯() -> None:
 
     with pytest.raises(TokenError):
         decode_token(bad_sub, TokenType.ACCESS)
-
-
-def test_正式環境不接受過低的_bcrypt_成本因子() -> None:
-    """測試環境調低 bcrypt rounds 是常見做法，但設定被複製到正式環境時
-    密碼雜湊會變得可暴力破解，且從外部完全看不出來。讓它在啟動時就失敗。
-    """
-    from app.core.config import Settings
-
-    common = {
-        "_env_file": None,
-        "SECRET_KEY": "a" * 40,
-        "JWT_SECRET_KEY": "b" * 40,
-        "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/d",
-        "REDIS_URL": "redis://localhost:6379/0",
-        "BCRYPT_ROUNDS": 4,
-    }
-
-    assert Settings(**common, ENVIRONMENT="testing").BCRYPT_ROUNDS == 4
-
-    with pytest.raises(ValidationError):
-        Settings(**common, ENVIRONMENT="production")

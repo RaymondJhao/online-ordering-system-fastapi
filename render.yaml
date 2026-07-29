@@ -6,11 +6,17 @@
 # 2. 部署前先跑 alembic upgrade head。舊版靠 db.create_all()，schema 一旦
 #    有資料就無法再變更；改用 migration 之後，部署流程必須包含套用遷移。
 # 3. 新增 Redis：JWT 撤銷名單、API 限流與排程的分散式鎖都依賴它。
-
-databases:
-  - name: ordering-db
-    plan: free
-    postgresMajorVersion: "16"
+#
+# ---------------------------------------------------------------------------
+# 為什麼這裡沒有宣告 databases:
+# ---------------------------------------------------------------------------
+# Render 免費方案的 PostgreSQL 建立後 30 天到期，之後有 14 天寬限期，
+# 逾期資料會被刪除。重建時會拿到**全新的連線字串**，若用 `fromDatabase`
+# 綁定，blueprint 與實際資料庫的對應關係會斷掉，狀態變得難以預期。
+#
+# 因此資料庫改為在 Dashboard 手動建立，DATABASE_URL 設為 sync: false 由人工填入。
+# 搭配下方的 preDeployCommand，重建流程只剩「貼上新的 Internal Database URL」
+# 這一步——結構與展示資料都會自動重建。完整步驟見 README 的部署章節。
 
 services:
   - type: redis
@@ -25,33 +31,37 @@ services:
     plan: free
     region: singapore
     rootDir: backend
-    healthCheckPath: /health
+
+    # 指向 liveness 而非 readiness。若健康檢查在資料庫不通時回 503，
+    # Render 會判定實例不健康並反覆重啟——而免費方案的資料庫每 30 天
+    # 就有一段需要重建的空窗期，那時最不需要的就是重啟迴圈。
+    healthCheckPath: /health/live
 
     buildCommand: pip install --upgrade pip && pip install .
 
+    # 套用遷移，並在資料庫是空的時候自動灌入展示資料。
+    # --if-empty 讓這行對一般部署是無作用的，只有重建後的第一次部署會實際執行。
+    preDeployCommand: alembic upgrade head && python -m scripts.seed --if-empty
+
     # 免費方案只有一個 instance，但仍設定為 2 個 worker：
     # 排程的 Redis 分散式鎖會確保逾時訂單只被處理一次。
-    preDeployCommand: alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
 
     envVars:
       - key: ENVIRONMENT
         value: production
 
+      # 手動填入 Render Dashboard 上 PostgreSQL 的 Internal Database URL。
+      # 平台給的是 postgresql://，app/core/config.py 會自動補上 asyncpg driver
+      # 並清掉 asyncpg 不認得的 sslmode / channel_binding 參數。
       - key: DATABASE_URL
-        fromDatabase:
-          name: ordering-db
-          property: connectionString
+        sync: false
 
       - key: REDIS_URL
         fromService:
           name: ordering-redis
           type: redis
           property: connectionString
-
-      # 註：Render 注入的連線字串是 postgresql://，async SQLAlchemy 需要
-      # postgresql+asyncpg://。app/core/config.py 的 _normalize_async_driver
-      # 會自動補上 driver，因此這裡不需要任何額外處理。
 
       - key: SECRET_KEY
         generateValue: true
@@ -72,8 +82,12 @@ services:
       - key: UNPAID_ORDER_TIMEOUT_MINUTES
         value: "15"
 
+      # 前端的 Vercel 正式網域；preview 部署用下面的 regex 放行
       - key: CORS_ORIGINS
         sync: false
+      - key: CORS_ORIGIN_REGEX
+        sync: false
+
       - key: ECPAY_MERCHANT_ID
         sync: false
       - key: ECPAY_HASH_KEY

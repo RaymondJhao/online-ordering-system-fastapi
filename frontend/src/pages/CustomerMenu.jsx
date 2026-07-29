@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api, { tokenStorage } from "../lib/api";
 import { ShoppingCart, Plus, Minus, X, User, LogOut, ClipboardList } from 'lucide-react'
 import { useCart } from '../context/CartContext'
 
@@ -13,22 +13,22 @@ function CustomerMenu() {
   const [error, setError] = useState(null)
   const [showAuthAlert, setShowAuthAlert] = useState(false)
   const [countdown, setCountdown] = useState(5)
-  const isLoggedIn = !!localStorage.getItem('token')
+  const isLoggedIn = !!tokenStorage.access
 
   const handleLogout = async () => {
     try {
-      await axios.post('/api/auth/logout')
+      await api.post('/api/auth/logout')
     } catch (err) {
       // 忽略登出 API 失敗（例如 Token 已過期或網路異常），仍繼續清除本地登入狀態
     } finally {
-      localStorage.removeItem('token')
+      tokenStorage.clear()
       window.location.reload()
     }
   }
 
   const goToCheckout = () => {
     setIsCartOpen(false)
-    if (!localStorage.getItem('token')) {
+    if (!tokenStorage.access) {
       setCountdown(5)
       setShowAuthAlert(true)
       return

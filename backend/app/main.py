@@ -77,6 +77,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    # Vercel 的 preview 部署每次都是隨機子網域（例如
+    # online-ordering-abc123-raymond.vercel.app），固定清單比對不到。
+    # 用 regex 才能讓 PR 的預覽環境也能呼叫 API。
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -85,16 +89,33 @@ app.add_middleware(
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 
-@app.get("/health", tags=["System"], summary="健康檢查")
-async def health_check(
+@app.get("/health/live", tags=["System"], summary="存活檢查（不檢查相依服務）")
+async def liveness() -> dict[str, str]:
+    """只回報「這個行程還活著」，不碰資料庫與 Redis。
+
+    為什麼要跟 readiness 分開：Render 會定期打 `healthCheckPath`，若該端點
+    在資料庫不通時回 503，平台會判定實例不健康而反覆重啟，甚至讓部署失敗。
+    這個專案用的是免費方案的 PostgreSQL，**每 30 天會過期需要重建**（見 README），
+    重建的空窗期若讓整個服務進入重啟迴圈，只會讓問題更難排查。
+
+    liveness 的語意是「要不要重啟我」，readiness 才是「能不能把流量給我」。
+    資料庫掛掉時正確的行為是回報未就緒，而不是重啟一個沒有問題的行程。
+
+    這個端點也適合當作外部監控的探測目標——它不會喚醒任何相依服務。
+    """
+    return {"status": "ok", "service": settings.PROJECT_NAME, "version": settings.VERSION}
+
+
+@app.get("/health/ready", tags=["System"], summary="就緒檢查（含相依服務）")
+@app.get("/health", tags=["System"], summary="就緒檢查（/health/ready 的別名）")
+async def readiness(
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, str]:
-    """回報服務與其相依元件的狀態，供容器編排與 Render 的健康檢查使用。
+    """回報服務與相依元件的狀態。
 
-    資料庫不通時回傳 503 而非 200：健康檢查若只回報「行程還活著」，
-    編排系統就無法察覺一個連不到資料庫、每個請求都失敗的實例。
-    Phase 2 會一併加入 Redis 的檢查。
+    任一相依服務不通就回 503：健康檢查若只回報「行程還活著」，
+    就無法察覺一個連不到資料庫、每個請求都失敗的實例。
     """
     try:
         await db.execute(text("SELECT 1"))
