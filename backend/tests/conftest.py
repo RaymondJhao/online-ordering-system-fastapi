@@ -13,15 +13,22 @@ SQLite 上的表現無法代表正式環境，等於測試綠燈並不保證線�
 
 import subprocess
 from collections.abc import AsyncGenerator
+from contextlib import suppress
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from httpx import ASGITransport, AsyncClient
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
+from app.core.database import dispose_engine, get_db, get_engine, get_sessionmaker
+from app.core.redis import close_redis, get_redis_pool
+from app.main import app
 from app.models import Coupon, Customer, DiscountType, MenuItem, Merchant
+from app.services.token_store import TokenStore
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -54,6 +61,28 @@ def migrated_database() -> None:
     """
     _run_alembic("downgrade", "base")
     _run_alembic("upgrade", "head")
+
+
+@pytest.fixture(autouse=True)
+async def _isolate_cached_connections() -> AsyncGenerator[None, None]:
+    """每個測試結束後釋放並清除被 lru_cache 快取的連線池。
+
+    `get_engine()` 與 `get_redis_pool()` 都加了 lru_cache，正式環境只有一個
+    長期存在的事件迴圈，快取是正確且必要的最佳化。但 pytest-asyncio 預設
+    每個測試各建立一個迴圈，連線池會綁在建立它的那個迴圈上；沿用到下一個測試時
+    底層迴圈已關閉，任何操作都會拋 `RuntimeError: Event loop is closed`。
+
+    這是測試環境特有的處理，不是為了繞過設計缺陷。
+    """
+    yield
+    with suppress(Exception):
+        await close_redis()
+    get_redis_pool.cache_clear()
+
+    with suppress(Exception):
+        await dispose_engine()
+    get_engine.cache_clear()
+    get_sessionmaker.cache_clear()
 
 
 @pytest.fixture
@@ -133,3 +162,77 @@ async def seed_data(db: AsyncSession) -> dict[str, object]:
         "menu_item": menu_item,
         "coupon": coupon,
     }
+
+
+# ---------------------------------------------------------------------------
+# Redis 與 HTTP client
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def redis_client() -> AsyncGenerator[Redis, None]:
+    """測試用 Redis，每個測試前後都清空。
+
+    與資料庫同樣的理由：不用 fakeredis 而用真實 Redis。GETDEL 的原子性、
+    TTL 行為與 EXISTS 的語意是 refresh 輪替正確性的基礎，用模擬品驗證
+    等於沒有驗證。CI 也提供真實的 redis service。
+    """
+    client = Redis.from_url(get_settings().redis_url_str, decode_responses=True)
+    await client.flushdb()
+    yield client
+    await client.flushdb()
+    await client.aclose()
+
+
+@pytest.fixture
+def token_store(redis_client: Redis) -> TokenStore:
+    return TokenStore(redis_client)
+
+
+@pytest.fixture
+async def client(db: AsyncSession, redis_client: Redis) -> AsyncGenerator[AsyncClient, None]:
+    """走完整 ASGI 流程的 HTTP client。
+
+    以 dependency_overrides 把路由用的 session 換成測試的 session，
+    讓路由寫入的資料與測試看到的是同一筆交易，且測試結束後一併 rollback。
+    """
+
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+        yield http_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def registered_customer(client: AsyncClient) -> dict[str, str]:
+    """已註冊的顧客帳號，回傳登入所需資訊。"""
+    payload = {
+        "role": "customer",
+        "name": "測試顧客",
+        "email": "auth-customer@test.com",
+        "password": "password123",
+    }
+    response = await client.post("/api/auth/register", json=payload)
+    assert response.status_code == 201, response.text
+    return payload
+
+
+@pytest.fixture
+async def logged_in_customer(
+    client: AsyncClient, registered_customer: dict[str, str]
+) -> dict[str, str]:
+    """已登入的顧客，回傳 access / refresh token。"""
+    response = await client.post(
+        "/api/auth/login",
+        json={
+            "role": "customer",
+            "email": registered_customer["email"],
+            "password": registered_customer["password"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()

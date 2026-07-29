@@ -22,8 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1 import api_router
 from app.core.config import Environment, get_settings
 from app.core.database import dispose_engine, get_db
+from app.core.redis import close_redis, get_redis
 
 # 在此呼叫一次：設定有誤時，應用程式會在啟動階段就失敗，而不是等到第一個請求。
 settings = get_settings()
@@ -34,16 +36,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """應用程式啟動與關閉時執行的工作。
 
     後續階段會在這裡接上：
-      - Phase 2：Redis 連線池（JWT blocklist 用）
       - Phase 4：AsyncIOScheduler 背景排程、fastapi-limiter 初始化
 
-    連線池採 lazy 建立（第一個請求時才真正連線），因此 startup 不需要動作；
-    shutdown 則必須顯式關閉，否則行程結束時會留下未關閉的連線。
+    資料庫與 Redis 的連線池都採 lazy 建立（第一個請求時才真正連線），
+    因此 startup 不需要動作；shutdown 則必須顯式關閉，
+    否則行程結束時會留下未關閉的連線。
     """
     # --- startup ---
     yield
     # --- shutdown ---
     await dispose_engine()
+    await close_redis()
 
 
 app = FastAPI(
@@ -65,6 +68,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
 
 @app.get("/health", tags=["System"], summary="健康檢查")
 async def health_check(
@@ -82,11 +87,21 @@ async def health_check(
         database_status = "ok"
     except Exception:  # 健康檢查要吞下所有錯誤並回報為不健康，不能讓例外往上拋
         database_status = "unavailable"
+
+    try:
+        await get_redis().ping()
+        redis_status = "ok"
+    except Exception:
+        redis_status = "unavailable"
+
+    healthy = database_status == "ok" and redis_status == "ok"
+    if not healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
     return {
-        "status": "ok" if database_status == "ok" else "degraded",
+        "status": "ok" if healthy else "degraded",
         "database": database_status,
+        "redis": redis_status,
         "service": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT.value,
