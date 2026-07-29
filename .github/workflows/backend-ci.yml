@@ -71,6 +71,8 @@ jobs:
       JWT_SECRET_KEY: ci-jwt-secret-key-with-more-than-32-characters
       DATABASE_URL: postgresql+asyncpg://test_user:test_password@localhost:5432/test_db
       REDIS_URL: redis://localhost:6379/0
+      # 測試不需要正式環境的雜湊強度，調低可讓整套測試快上數十倍
+      BCRYPT_ROUNDS: "4"
 
     steps:
       - uses: actions/checkout@v4

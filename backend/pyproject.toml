@@ -107,3 +107,21 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+
+# ---------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["app"]
+# 沒有這一行，覆蓋率報告會嚴重低估。SQLAlchemy 的 async 支援是用 greenlet
+# 實作的，每次 await 資料庫操作都會切換 greenlet；coverage 預設的追蹤器
+# 在切換後會跟丟執行的frame，導致「await 之後的每一行」都被算成未覆蓋。
+# 症狀很好認：測試明明通過，report 卻顯示函式主體大半沒被執行到。
+concurrency = ["thread", "greenlet"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "pragma: no cover",
+]

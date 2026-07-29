@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 import pytest
 from httpx import AsyncClient
+from pydantic import ValidationError
 
 from app.core.config import get_settings
 from app.core.security import (
@@ -317,3 +318,24 @@ def test_decode_token_對非數字的_sub_拋錯() -> None:
 
     with pytest.raises(TokenError):
         decode_token(bad_sub, TokenType.ACCESS)
+
+
+def test_正式環境不接受過低的_bcrypt_成本因子() -> None:
+    """測試環境調低 bcrypt rounds 是常見做法，但設定被複製到正式環境時
+    密碼雜湊會變得可暴力破解，且從外部完全看不出來。讓它在啟動時就失敗。
+    """
+    from app.core.config import Settings
+
+    common = {
+        "_env_file": None,
+        "SECRET_KEY": "a" * 40,
+        "JWT_SECRET_KEY": "b" * 40,
+        "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/d",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "BCRYPT_ROUNDS": 4,
+    }
+
+    assert Settings(**common, ENVIRONMENT="testing").BCRYPT_ROUNDS == 4
+
+    with pytest.raises(ValidationError):
+        Settings(**common, ENVIRONMENT="production")

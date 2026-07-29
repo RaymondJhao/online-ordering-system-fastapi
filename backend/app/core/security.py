@@ -75,7 +75,8 @@ def _prehash(password: str) -> bytes:
 
 
 def _hash_password_sync(password: str) -> str:
-    return bcrypt.hashpw(_prehash(password), bcrypt.gensalt()).decode("utf-8")
+    rounds = get_settings().BCRYPT_ROUNDS
+    return bcrypt.hashpw(_prehash(password), bcrypt.gensalt(rounds)).decode("utf-8")
 
 
 def _verify_password_sync(password: str, password_hash: str) -> bool:

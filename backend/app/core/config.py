@@ -13,9 +13,9 @@
 import json
 from enum import StrEnum
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import Field, PostgresDsn, RedisDsn, field_validator
+from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # 常見的佔位字串。正式環境誤用這些值等同沒有設定金鑰，直接擋下。
@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: Literal["HS256", "HS384", "HS512"] = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: Annotated[int, Field(gt=0, le=1440)] = 15
     REFRESH_TOKEN_EXPIRE_DAYS: Annotated[int, Field(gt=0, le=90)] = 7
+
+    # bcrypt 的成本因子。每 +1 代表運算時間加倍，12 約需 200~300ms。
+    # 測試環境可調到 4 讓整套測試快上數十倍；下方的驗證會確保正式環境不會誤用低值。
+    BCRYPT_ROUNDS: Annotated[int, Field(ge=4, le=16)] = 12
 
     # --- 外部服務 ---
     DATABASE_URL: PostgresDsn
@@ -122,6 +126,18 @@ class Settings(BaseSettings):
                 f"{info.field_name} 長度為 {len(value)}，至少需要 {_MIN_SECRET_LENGTH} 字元。"
             )
         return value
+
+    @model_validator(mode="after")
+    def _enforce_production_bcrypt_cost(self) -> Self:
+        """正式環境不允許使用測試用的低成本因子。
+
+        「測試環境調低 bcrypt rounds」是常見且合理的做法，但它的風險是
+        設定被複製到正式環境而沒人察覺——密碼雜湊會變得可以暴力破解，
+        且從外部完全看不出來。這裡讓錯誤設定在啟動時就失敗。
+        """
+        if self.ENVIRONMENT is Environment.PRODUCTION and self.BCRYPT_ROUNDS < 12:
+            raise ValueError(f"正式環境的 BCRYPT_ROUNDS 不可低於 12（目前為 {self.BCRYPT_ROUNDS}）")
+        return self
 
     @property
     def is_production(self) -> bool:

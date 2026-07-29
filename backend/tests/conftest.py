@@ -236,3 +236,50 @@ async def logged_in_customer(
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+async def _register_and_login(client: AsyncClient, role: str, email: str) -> dict:
+    payload = {
+        "role": role,
+        "name": f"測試{role}",
+        "email": email,
+        "password": "password123",
+    }
+    register = await client.post("/api/auth/register", json=payload)
+    assert register.status_code == 201, register.text
+
+    login = await client.post(
+        "/api/auth/login",
+        json={"role": role, "email": email, "password": "password123"},
+    )
+    assert login.status_code == 200, login.text
+    return login.json()
+
+
+@pytest.fixture
+async def merchant_session(client: AsyncClient) -> dict:
+    """已登入的商家。"""
+    return await _register_and_login(client, "merchant", "shop@test.com")
+
+
+@pytest.fixture
+async def customer_session(client: AsyncClient) -> dict:
+    """已登入的顧客（與 logged_in_customer 使用不同信箱，可同時存在）。"""
+    return await _register_and_login(client, "customer", "buyer@test.com")
+
+
+def auth_headers(session: dict) -> dict[str, str]:
+    """把登入回應轉成 Authorization 標頭。"""
+    return {"Authorization": f"Bearer {session['access_token']}"}
+
+
+@pytest.fixture
+async def merchant_menu_item(client: AsyncClient, merchant_session: dict) -> dict:
+    """商家建立的一個餐點，庫存 50、單價 120。"""
+    response = await client.post(
+        "/api/menu",
+        json={"name": "招牌漢堡", "price": "120.00", "description": "手打牛肉排", "stock": 50},
+        headers=auth_headers(merchant_session),
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
