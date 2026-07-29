@@ -34,9 +34,15 @@ function MerchantDashboard() {
     navigate("/auth", { state: { from: "/merchant" } });
   }, [navigate]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    navigate("/auth", { state: { from: "/merchant" } });
+  const handleLogout = async () => {
+    try {
+      await axios.post("/api/auth/logout");
+    } catch (err) {
+      // 忽略登出 API 失敗（例如 Token 已過期或網路異常），仍繼續清除本地登入狀態
+    } finally {
+      localStorage.removeItem("token");
+      navigate("/auth", { state: { from: "/merchant" } });
+    }
   };
 
   // 庫存資料在頂層共用：庫存查詢頁籤與手動建單 (POS) 頁籤都需要同一份餐點清單，

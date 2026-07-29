@@ -23,3 +23,12 @@ db = SQLAlchemy()
 bcrypt = Bcrypt()
 jwt = JWTManager()
 limiter = Limiter(key_func=get_remote_address, storage_uri=_resolve_ratelimit_storage_uri())
+
+
+@jwt.token_in_blocklist_loader
+def check_if_token_in_blocklist(jwt_header, jwt_payload):
+    # 延遲匯入避免 models.py（會 import 本檔的 db）與本檔互相循環匯入
+    from .models import TokenBlocklist
+
+    jti = jwt_payload["jti"]
+    return db.session.query(TokenBlocklist.id).filter_by(jti=jti).first() is not None

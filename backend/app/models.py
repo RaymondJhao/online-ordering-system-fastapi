@@ -197,6 +197,16 @@ class OrderItem(db.Model):
     menu_item = db.relationship("MenuItem", back_populates="order_items")
 
 
+class TokenBlocklist(db.Model):
+    """已登出／被撤銷的 JWT，記錄其 jti 供 token_in_blocklist_loader 查詢比對。"""
+
+    __tablename__ = "token_blocklist"
+
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(36), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+
 class IdempotencyRecord(db.Model):
     """記錄已處理過的 Idempotency-Key 與其對應的回應內容，
     用來防止客戶端重試/雙擊送出同一筆請求時重複扣庫存、重複建單。"""

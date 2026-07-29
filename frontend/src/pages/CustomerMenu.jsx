@@ -15,9 +15,15 @@ function CustomerMenu() {
   const [countdown, setCountdown] = useState(5)
   const isLoggedIn = !!localStorage.getItem('token')
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    window.location.reload()
+  const handleLogout = async () => {
+    try {
+      await axios.post('/api/auth/logout')
+    } catch (err) {
+      // 忽略登出 API 失敗（例如 Token 已過期或網路異常），仍繼續清除本地登入狀態
+    } finally {
+      localStorage.removeItem('token')
+      window.location.reload()
+    }
   }
 
   const goToCheckout = () => {

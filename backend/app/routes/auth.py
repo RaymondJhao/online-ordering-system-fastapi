@@ -1,8 +1,8 @@
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import create_access_token
+from flask_jwt_extended import create_access_token, get_jwt, jwt_required
 
 from ..extensions import db
-from ..models import Customer, Merchant
+from ..models import Customer, Merchant, TokenBlocklist
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -153,3 +153,24 @@ def login():
         ),
         200,
     )
+
+
+@auth_bp.route("/logout", methods=["POST"])
+@jwt_required()
+def logout():
+    """登出，將目前的 Token 加入 Blocklist 使其立即失效
+    ---
+    tags:
+      - Auth
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: 登出成功
+    """
+    jti = get_jwt()["jti"]
+
+    db.session.add(TokenBlocklist(jti=jti))
+    db.session.commit()
+
+    return jsonify({"message": "登出成功"}), 200
