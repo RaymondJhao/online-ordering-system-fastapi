@@ -22,7 +22,10 @@ dependencies = [
     "alembic>=1.14.0",
 
     # 設定與驗證
-    "pydantic>=2.10.0",
+    # [email] extra 是必要的，不是可有可無：app/schemas/auth.py 用了 EmailStr，
+    # 而 pydantic v2 會在「建立 model 類別時」就嘗試 import email_validator，
+    # 缺少會在 import 階段直接拋 ImportError，而非等到實際驗證資料時。
+    "pydantic[email]>=2.10.0",
     "pydantic-settings>=2.7.0",
 
     # 認證
