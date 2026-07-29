@@ -7,6 +7,7 @@ import {
   Ticket,
   ShoppingCart,
   CircleCheck,
+  LogOut,
 } from "lucide-react";
 import OrderList from "../components/merchant/OrderList";
 import InventoryPanel from "../components/merchant/InventoryPanel";
@@ -32,6 +33,11 @@ function MerchantDashboard() {
   const handleAuthError = useCallback(() => {
     navigate("/auth", { state: { from: "/merchant" } });
   }, [navigate]);
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    navigate("/auth", { state: { from: "/merchant" } });
+  };
 
   // 庫存資料在頂層共用：庫存查詢頁籤與手動建單 (POS) 頁籤都需要同一份餐點清單，
   // 提到共同的祖先元件才能避免切換頁籤時重複打 API，POS 也才能立刻拿到最新庫存。
@@ -70,30 +76,41 @@ function MerchantDashboard() {
   return (
     <div className="min-h-screen bg-gray-900">
       <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-900/95 px-6 py-5 backdrop-blur">
-        <div className="mx-auto max-w-7xl">
-          <h1 className="text-3xl font-bold text-white">商家後台管理系統</h1>
+        <div className="mx-auto flex max-w-7xl items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-white">商家後台管理系統</h1>
 
-          <nav className="mt-5 flex flex-wrap gap-3">
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex min-h-[52px] items-center gap-2 rounded-xl px-6 text-lg font-bold transition-colors ${
-                    isActive
-                      ? "bg-amber-500 text-gray-900 shadow"
-                      : "border border-gray-700 text-gray-300 hover:bg-gray-800"
-                  }`}
-                >
-                  <Icon size={22} aria-hidden="true" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </nav>
+            <nav className="mt-5 flex flex-wrap gap-3">
+              {TABS.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex min-h-[52px] items-center gap-2 rounded-xl px-6 text-lg font-bold transition-colors ${
+                      isActive
+                        ? "bg-amber-500 text-gray-900 shadow"
+                        : "border border-gray-700 text-gray-300 hover:bg-gray-800"
+                    }`}
+                  >
+                    <Icon size={22} aria-hidden="true" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex min-h-[52px] items-center gap-2 rounded-xl border border-gray-700 px-6 text-lg font-bold text-gray-300 transition-colors hover:bg-gray-800"
+          >
+            <LogOut size={22} aria-hidden="true" />
+            登出
+          </button>
         </div>
       </header>
 
