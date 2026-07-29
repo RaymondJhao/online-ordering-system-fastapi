@@ -10,12 +10,13 @@
    這裡把金鑰設為必填欄位，缺少就啟動失敗。
 """
 
+import json
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
 
 from pydantic import Field, PostgresDsn, RedisDsn, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # 常見的佔位字串。正式環境誤用這些值等同沒有設定金鑰，直接擋下。
 _PLACEHOLDER_SECRETS = {
@@ -63,7 +64,10 @@ class Settings(BaseSettings):
     REDIS_URL: RedisDsn
 
     # --- CORS ---
-    CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    # NoDecode 讓 pydantic-settings 跳過預設的 JSON 解碼，把原始字串交給下面的
+    # validator 處理。少了它，環境變數若不是合法 JSON（例如逗號分隔的寫法），
+    # 會在 EnvSettingsSource 階段就拋 SettingsError，validator 根本不會被呼叫。
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
     # --- 綠界 ECPay ---
     ECPAY_MERCHANT_ID: str = "2000132"
@@ -76,15 +80,29 @@ class Settings(BaseSettings):
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def _split_cors_origins(cls, value: object) -> object:
-        """允許用逗號分隔的字串設定，例如 CORS_ORIGINS=http://a,http://b。
+    def _parse_cors_origins(cls, value: object) -> object:
+        """同時支援 JSON 陣列與逗號分隔兩種寫法。
 
-        pydantic-settings 預設會把 list 欄位當成 JSON 解析，直接寫逗號分隔會噴錯，
-        所以在驗證前先自行切分。
+            CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"]
+            CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+
+        兩者都常見於教學與現有部署設定，接受兩種可以避免踩到
+        「格式對了但沒人告訴你」的坑。
         """
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+        if not isinstance(value, str):
+            return value
+
+        text = value.strip()
+        if text.startswith("["):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"CORS_ORIGINS 看起來是 JSON 陣列但格式有誤：{exc}。"
+                    '請確認使用雙引號，例如 ["http://localhost:5173"]'
+                ) from exc
+
+        return [origin.strip() for origin in text.split(",") if origin.strip()]
 
     @field_validator("SECRET_KEY", "JWT_SECRET_KEY")
     @classmethod
