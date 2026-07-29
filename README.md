@@ -169,12 +169,22 @@ security scheme，token 怎麼簽、怎麼驗、怎麼撤銷都要自己實作�
 - **背景排程**：`AsyncIOScheduler` 由 lifespan 管理，每分鐘取消逾時未付款訂單並回補庫存。
   多 worker 環境下用 **Redis 分散式鎖**（`SET NX EX`）確保同一輪只有一個 worker 執行
 - **限流**：Redis 滑動視窗，Lua 腳本保證原子性，回傳 `Retry-After` 與 `X-RateLimit-*`
-- **健康檢查**：`/health` 實際檢查資料庫與 Redis 連線，不通時回 503 而非 200——
-  只回報「行程還活著」的健康檢查無法讓編排系統察覺失效的實例
+- **健康檢查拆成 liveness / readiness**：`/health/live` 不碰相依服務，
+  `/health/ready` 實際檢查資料庫與 Redis 並在不通時回 503。
+  平台的健康檢查必須指向前者——否則資料庫故障會讓服務陷入重啟迴圈，
+  而 liveness 的語意本來就是「要不要重啟我」而非「能不能給我流量」
 
-### 5. 測試與工程紀律
+### 5. 前端的 token 續期與錯誤處理
 
-- **109 個測試、93% 覆蓋率**，全部跑在真實 PostgreSQL 與 Redis 上而非模擬品
+- **401 → refresh → 重試**的攔截器，且多個並行請求**共用同一個 refresh promise**。
+  各自去 refresh 會觸發後端的重用偵測，結果不是續期而是撤銷整條 family——
+  用自己的安全機制把使用者踢出去
+- FastAPI 回的是 `detail` 而非 `message`，且 422 的 `detail` 是**陣列**。
+  統一由 `extractErrorMessage()` 處理，並涵蓋 429 的 `Retry-After` 與逾時情境
+
+### 6. 測試與工程紀律
+
+- **117 個測試、93% 覆蓋率**，全部跑在真實 PostgreSQL 與 Redis 上而非模擬品
   （[ADR 0004](docs/adr/0004-unify-on-postgres.md) 說明為什麼）
 - 測試資料庫結構由 **Alembic 建立**（`downgrade base` + `upgrade head`），
   每次測試都順帶驗證 migration 可正確升級與回滾
