@@ -168,6 +168,65 @@ def serialize_order(order):
 @limiter.limit("5 per minute")
 @jwt_required()
 def create_order():
+    """顧客建立訂單
+    ---
+    tags:
+      - Orders
+    security:
+      - Bearer: []
+    parameters:
+      - in: header
+        name: Idempotency-Key
+        type: string
+        required: false
+        description: 冪等性金鑰；重送相同的 key 不會重複建單或重複扣庫存
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - merchant_id
+            - items
+          properties:
+            merchant_id:
+              type: integer
+              example: 1
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  menu_item_id:
+                    type: integer
+                  quantity:
+                    type: integer
+              example:
+                - menu_item_id: 1
+                  quantity: 2
+            payment_method:
+              type: string
+              enum: [online, cash]
+              example: online
+            coupon_code:
+              type: string
+              example: OPEN888
+            pickup_time:
+              type: string
+              example: "2026-07-29T18:30:00"
+            table_number:
+              type: string
+              example: "A5"
+    responses:
+      201:
+        description: 訂單建立成功
+      400:
+        description: 缺少必要欄位、格式錯誤，或餐點庫存不足
+      403:
+        description: 僅限顧客下單（role 必須為 customer）
+      404:
+        description: 商家不存在
+    """
     if get_jwt().get("role") != "customer":
         return jsonify({"message": "僅限顧客下單"}), 403
 

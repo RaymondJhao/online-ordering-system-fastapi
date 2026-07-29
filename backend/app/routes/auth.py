@@ -64,6 +64,58 @@ def register():
 
 @auth_bp.route("/login", methods=["POST"])
 def login():
+    """使用者登入
+    ---
+    tags:
+      - Auth
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - role
+            - email
+            - password
+          properties:
+            role:
+              type: string
+              enum: [customer, merchant]
+              example: customer
+            email:
+              type: string
+              example: customer@test.com
+            password:
+              type: string
+              example: password123
+    responses:
+      200:
+        description: 登入成功，回傳 JWT access_token
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: 登入成功
+            access_token:
+              type: string
+            user:
+              type: object
+              properties:
+                id:
+                  type: integer
+                name:
+                  type: string
+                email:
+                  type: string
+                role:
+                  type: string
+      400:
+        description: 缺少必要欄位，或 role 不是 customer/merchant
+      401:
+        description: 信箱或密碼錯誤
+    """
     data = request.get_json(silent=True) or {}
 
     role = data.get("role")
