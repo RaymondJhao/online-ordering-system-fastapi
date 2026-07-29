@@ -54,7 +54,10 @@ packages = ["app"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["legacy", "alembic/versions"]
+# legacy/ 是遷移期的 Flask 對照程式碼，Phase 5 會整個刪除，不納入檢查。
+# alembic/versions/ 則刻意「不」排除：migration 是正式程式碼，
+# alembic.ini 的 post_write_hooks 也會在產生後自動套用 ruff。
+extend-exclude = ["legacy"]
 
 [tool.ruff.lint]
 select = [
@@ -82,7 +85,16 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "S105", "S106"]  # 測試允許 assert 與寫死的假密碼
+"tests/*" = [
+    "S101",  # 測試本來就要用 assert
+    "S105",  # 測試中寫死的假密碼／假 token
+    "S106",
+    "S603",  # conftest 以子行程執行 alembic，參數由程式碼固定，非外部輸入
+    "S607",
+    # 測試函式名稱刻意使用中文，pytest 輸出可直接當作規格說明閱讀，
+    # 例如 test_原子扣庫存在庫存不足時不會扣減。與 N802 的英文命名規則衝突。
+    "N802",
+]
 
 [tool.ruff.format]
 quote-style = "double"

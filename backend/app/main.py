@@ -15,11 +15,15 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Environment, get_settings
+from app.core.database import dispose_engine, get_db
 
 # 在此呼叫一次：設定有誤時，應用程式會在啟動階段就失敗，而不是等到第一個請求。
 settings = get_settings()
@@ -29,14 +33,17 @@ settings = get_settings()
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """應用程式啟動與關閉時執行的工作。
 
-    Phase 0 先留空骨架；後續階段會在這裡接上：
-      - Phase 1：資料庫連線池的建立與關閉
+    後續階段會在這裡接上：
       - Phase 2：Redis 連線池（JWT blocklist 用）
       - Phase 4：AsyncIOScheduler 背景排程、fastapi-limiter 初始化
+
+    連線池採 lazy 建立（第一個請求時才真正連線），因此 startup 不需要動作；
+    shutdown 則必須顯式關閉，否則行程結束時會留下未關閉的連線。
     """
     # --- startup ---
     yield
     # --- shutdown ---
+    await dispose_engine()
 
 
 app = FastAPI(
@@ -60,13 +67,26 @@ app.add_middleware(
 
 
 @app.get("/health", tags=["System"], summary="健康檢查")
-async def health_check() -> dict[str, str]:
-    """回報服務存活狀態，供容器編排與 Render 的健康檢查使用。
+async def health_check(
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, str]:
+    """回報服務與其相依元件的狀態，供容器編排與 Render 的健康檢查使用。
 
-    Phase 1 會擴充為同時檢查資料庫與 Redis 的連線狀態。
+    資料庫不通時回傳 503 而非 200：健康檢查若只回報「行程還活著」，
+    編排系統就無法察覺一個連不到資料庫、每個請求都失敗的實例。
+    Phase 2 會一併加入 Redis 的檢查。
     """
+    try:
+        await db.execute(text("SELECT 1"))
+        database_status = "ok"
+    except Exception:  # 健康檢查要吞下所有錯誤並回報為不健康，不能讓例外往上拋
+        database_status = "unavailable"
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
     return {
-        "status": "ok",
+        "status": "ok" if database_status == "ok" else "degraded",
+        "database": database_status,
         "service": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT.value,
