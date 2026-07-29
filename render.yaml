@@ -24,6 +24,11 @@ services:
   - type: keyvalue
     name: ordering-redis
     plan: free
+    # region 省略時預設是 oregon，而 web service 指定了 singapore。
+    # Render 的內部私有網路是以 region 為界的，跨區的 fromService 連線字串
+    # 連不到——服務會正常啟動，直到第一個需要 Redis 的請求（登入、限流）才失敗。
+    # 手動建立的 PostgreSQL 也必須選 Singapore，否則 Internal Database URL 同樣無效。
+    region: singapore
     # 只有同一個 Render 帳號內的服務可以連線
     ipAllowList: []
 
