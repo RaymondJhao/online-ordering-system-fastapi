@@ -360,7 +360,13 @@ Render 免費方案每月 750 instance hours，而一個月有 730 小時——2
 `render.yaml` 定義了 Web Service 與 Redis：
 
 - 啟動指令為 `uvicorn`（FastAPI 是 ASGI，用 WSGI server 會直接失敗）
-- `preDeployCommand` 執行 `alembic upgrade head && python -m scripts.seed --if-empty`
+- `startCommand` 前面串了 `alembic upgrade head && python -m scripts.seed --if-empty`。
+  **不用 `preDeployCommand` 是因為它只開放給付費方案**——免費方案設了不會執行，
+  失敗模式是「部署成功但 schema 從未建立」，直到第一個查詢才炸。
+  alembic upgrade 冪等且免費方案只有一個 instance，放在啟動指令是安全的；
+  升級付費方案後應改回 `preDeployCommand`
+- `PYTHON_VERSION` 固定為 `3.12.13`。Render 的預設版本會隨服務建立時間浮動
+  （目前預設 3.14.3），不釘住等於正式環境跑一個 CI 從未驗證過的直譯器
 - `healthCheckPath` 指向 **`/health/live`** 而非 `/health`——若健康檢查在資料庫
   不通時回 503，Render 會判定實例不健康而反覆重啟，而免費資料庫每 30 天
   就有一段重建空窗期
@@ -382,7 +388,7 @@ Render 免費 PostgreSQL 建立後 30 天到期，之後有 14 天寬限期，�
 1. Render Dashboard → **New → PostgreSQL**，選 Free，記下建立日期
 2. 進入新資料庫 → 複製 **Internal Database URL**
 3. 到 `ordering-backend` 的 **Environment** → 把 `DATABASE_URL` 換成新的值 → Save
-4. 存檔會自動觸發重新部署，`preDeployCommand` 會：
+4. 存檔會自動觸發重新部署，`startCommand` 開頭會：
    - `alembic upgrade head` 建立所有資料表
    - `python -m scripts.seed --if-empty` 灌入展示帳號與情境訂單
 5. 部署完成後打開 `/health/ready` 確認 `database` 與 `redis` 都是 `ok`
@@ -391,7 +397,7 @@ Render 免費 PostgreSQL 建立後 30 天到期，之後有 14 天寬限期，�
 整個流程約 3 分鐘，不需要 shell，也不需要在本機做任何事。
 
 `--if-empty` 讓 seed 對一般部署毫無作用（資料庫有資料就跳過），
-只有重建後的第一次部署會實際執行——因此這行可以永遠留在 `preDeployCommand` 裡。
+只有重建後的第一次部署會實際執行——因此這行可以永遠留在啟動指令裡。
 
 ### 前端（Vercel）
 

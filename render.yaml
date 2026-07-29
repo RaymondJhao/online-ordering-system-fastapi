@@ -19,7 +19,9 @@
 # 這一步——結構與展示資料都會自動重建。完整步驟見 README 的部署章節。
 
 services:
-  - type: redis
+  # Render 已將 Redis 更名為 Key Value；`type: redis` 目前仍是可用的別名，
+  # 但官方文件已標記為 deprecated，直接用新名稱避免日後被移除。
+  - type: keyvalue
     name: ordering-redis
     plan: free
     # 只有同一個 Render 帳號內的服務可以連線
@@ -39,15 +41,37 @@ services:
 
     buildCommand: pip install --upgrade pip && pip install .
 
-    # 套用遷移，並在資料庫是空的時候自動灌入展示資料。
-    # --if-empty 讓這行對一般部署是無作用的，只有重建後的第一次部署會實際執行。
-    preDeployCommand: alembic upgrade head && python -m scripts.seed --if-empty
-
+    # ---------------------------------------------------------------------
+    # 為什麼遷移寫在 startCommand 而不是 preDeployCommand：
+    # ---------------------------------------------------------------------
+    # preDeployCommand 只提供給付費方案（官方文件：「available for paid web
+    # services, private services, and background workers」）。本服務是 plan: free，
+    # 設了也不會執行，結果會是「部署成功但 schema 從未建立」——啟動沒事，
+    # 第一個打到資料庫的請求才炸，是最難追的失敗模式。
+    #
+    # 折衷做法是把遷移併進 startCommand。alembic upgrade 是冪等的，重複執行
+    # 無副作用；免費方案只有一個 instance，不會有多實例同時遷移的競態。
+    # 代價是每次重啟都多幾秒啟動時間，而冷啟動本來就要等，影響有限。
+    # 升級到付費方案後應改回 preDeployCommand。
+    #
+    # --if-empty 讓 seed 對一般部署無作用，只有重建後的第一次部署會實際執行。
+    #
     # 免費方案只有一個 instance，但仍設定為 2 個 worker：
     # 排程的 Redis 分散式鎖會確保逾時訂單只被處理一次。
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
+    startCommand: >-
+      alembic upgrade head &&
+      python -m scripts.seed --if-empty &&
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
 
     envVars:
+      # 不指定的話，Render 會用「服務建立當下」的預設版本——目前是 3.14.3。
+      # 本專案 requires-python >=3.12，語法上不會被擋，但 CI 與 Dockerfile 都是
+      # 3.12，正式環境跑一個從沒測過的直譯器（且 asyncpg / greenlet / bcrypt
+      # 這類 C 擴充在新版未必有 wheel，會退回原始碼編譯）不是划算的賭注。
+      # 用環境變數指定時必須寫完整版號。
+      - key: PYTHON_VERSION
+        value: "3.12.13"
+
       - key: ENVIRONMENT
         value: production
 
@@ -60,7 +84,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: ordering-redis
-          type: redis
+          type: keyvalue
           property: connectionString
 
       - key: SECRET_KEY

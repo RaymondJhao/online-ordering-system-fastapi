@@ -75,12 +75,23 @@ pooler 模式選擇、Neon 的 CU-hours 計費與 scale-to-zero，都需要實�
 緩解方式是讓重建盡量無腦：
 
 ```yaml
-preDeployCommand: alembic upgrade head && python -m scripts.seed --if-empty
+startCommand: >-
+  alembic upgrade head &&
+  python -m scripts.seed --if-empty &&
+  uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
 ```
 
 `--if-empty` 讓這行對一般部署毫無作用，只有在資料庫是空的時候才會灌入
 展示資料。重建流程因此縮短為「建新 DB → 貼上新的連線字串 → 存檔」，
 結構與 demo 資料都會自動回來。
+
+> **更正（部署前審查時發現）**：這段原本寫在 `preDeployCommand`，
+> 但 Render 的 pre-deploy command **只開放給付費方案**。免費方案設了不會執行，
+> 部署仍會顯示成功，schema 卻從未建立——這正是本節想避免的那種靜默失敗，
+> 而且會發生在「以為重建完成了」之後。
+> 改併入 `startCommand`：alembic upgrade 冪等，免費方案又只有單一 instance，
+> 沒有多實例同時遷移的競態。代價是每次重啟多幾秒，而冷啟動本來就要等。
+> 升級付費方案後應改回 `preDeployCommand`，讓遷移與服務啟動分離。
 
 同時 `render.yaml` 刻意**不宣告 `databases:`**：免費資料庫重建後連線字串
 會改變，用 `fromDatabase` 綁定會讓 blueprint 與實際資料庫的對應關係斷掉。
