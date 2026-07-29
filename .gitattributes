@@ -1,0 +1,35 @@
+# 統一換行符：repo 內一律 LF，checkout 到工作目錄也是 LF。
+# 沒有這份設定時，Windows 的 CRLF 會讓每次 commit 都變成全檔案重寫，
+# 使 git history 失去可讀性（舊專案就有這個問題）。
+* text=auto eol=lf
+
+# 二進位檔案不做任何換行符轉換
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.pdf   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.db    binary
+*.sqlite3 binary
+
+# 明確指定為文字檔
+*.py    text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.json  text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.svg   text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.sh    text eol=lf
+*.cfg   text eol=lf
+*.ini   text eol=lf
+.env.example text eol=lf
