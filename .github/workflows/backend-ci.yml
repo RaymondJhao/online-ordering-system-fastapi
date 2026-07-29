@@ -100,3 +100,44 @@ jobs:
         run: |
           alembic upgrade head
           alembic check
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # 建置成功本身就是驗證：多階段建置、pyproject 打包、非 root 使用者
+      # 任何一環出錯都會在這裡失敗，而不是等到部署當下。
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: false
+          load: true
+          tags: ordering-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 只驗證「應用程式能不能啟動」。沒有資料庫與 Redis 時 /health 會回 503，
+      # 那是預期行為；重點在於映像不會因為缺少相依套件或路徑錯誤而直接崩潰。
+      - name: Smoke test
+        run: |
+          docker run -d --name api -p 8000:8000 \
+            -e ENVIRONMENT=production \
+            -e SECRET_KEY=ci-smoke-test-secret-key-longer-than-32 \
+            -e JWT_SECRET_KEY=ci-smoke-test-jwt-key-longer-than-32-ch \
+            -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/none \
+            -e REDIS_URL=redis://127.0.0.1:6379/0 \
+            -e SCHEDULER_ENABLED=false \
+            ordering-backend:ci
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
+            if [ "$code" = "503" ] || [ "$code" = "200" ]; then
+              echo "應用程式已啟動並回應（HTTP $code）"; exit 0
+            fi
+            sleep 2
+          done
+          echo "應用程式未在時限內回應"; docker logs api; exit 1

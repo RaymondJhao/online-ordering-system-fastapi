@@ -10,6 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.api.deps import DbSession, TokenPayloadDep, require_role
+from app.core.rate_limit import RateLimiter
 from app.core.security import TokenPayload
 from app.schemas.order import (
     CustomerOrderCreate,
@@ -61,6 +62,9 @@ async def _load_response(db: DbSession, order_id: int) -> OrderResponse:
     response_model=OrderResponse,
     status_code=status.HTTP_201_CREATED,
     summary="顧客下單",
+    # 沿用舊版 Flask-Limiter 的 5 per minute。下單會扣庫存、寫入多張資料表，
+    # 是本系統成本最高也最值得保護的端點。
+    dependencies=[Depends(RateLimiter(times=5, seconds=60, scope="create_order"))],
 )
 async def create_order(
     payload: CustomerOrderCreate,

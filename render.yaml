@@ -1,16 +1,84 @@
+# Render 部署設定。
+#
+# 與 Flask 版的差異：
+# 1. 啟動指令從 `gunicorn app:app`（WSGI）改為 uvicorn。FastAPI 是 ASGI 應用，
+#    用 WSGI server 啟動會直接失敗。
+# 2. 部署前先跑 alembic upgrade head。舊版靠 db.create_all()，schema 一旦
+#    有資料就無法再變更；改用 migration 之後，部署流程必須包含套用遷移。
+# 3. 新增 Redis：JWT 撤銷名單、API 限流與排程的分散式鎖都依賴它。
+
 databases:
   - name: ordering-db
     plan: free
+    postgresMajorVersion: "16"
 
 services:
+  - type: redis
+    name: ordering-redis
+    plan: free
+    # 只有同一個 Render 帳號內的服務可以連線
+    ipAllowList: []
+
   - type: web
     name: ordering-backend
-    env: python
+    runtime: python
     plan: free
-    buildCommand: cd backend && pip install -r requirements.txt
-    startCommand: cd backend && gunicorn app:app
+    region: singapore
+    rootDir: backend
+    healthCheckPath: /health
+
+    buildCommand: pip install --upgrade pip && pip install .
+
+    # 免費方案只有一個 instance，但仍設定為 2 個 worker：
+    # 排程的 Redis 分散式鎖會確保逾時訂單只被處理一次。
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
+
     envVars:
+      - key: ENVIRONMENT
+        value: production
+
       - key: DATABASE_URL
         fromDatabase:
           name: ordering-db
           property: connectionString
+
+      - key: REDIS_URL
+        fromService:
+          name: ordering-redis
+          type: redis
+          property: connectionString
+
+      # 註：Render 注入的連線字串是 postgresql://，async SQLAlchemy 需要
+      # postgresql+asyncpg://。app/core/config.py 的 _normalize_async_driver
+      # 會自動補上 driver，因此這裡不需要任何額外處理。
+
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "15"
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: BCRYPT_ROUNDS
+        value: "12"
+
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      - key: UNPAID_ORDER_TIMEOUT_MINUTES
+        value: "15"
+
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ECPAY_MERCHANT_ID
+        sync: false
+      - key: ECPAY_HASH_KEY
+        sync: false
+      - key: ECPAY_HASH_IV
+        sync: false
+      - key: ECPAY_RETURN_URL
+        sync: false

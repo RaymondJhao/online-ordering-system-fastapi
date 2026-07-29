@@ -30,8 +30,9 @@ dependencies = [
     "bcrypt>=4.2.0",
 
     # 快取／限流／背景排程
+    # 限流未使用 fastapi-limiter：它在 0.2 版改為 pyrate_limiter 的薄包裝，
+    # API 與多數文件不符。改以 Redis Lua 腳本自行實作，見 core/rate_limit.py。
     "redis>=5.2.0",
-    "fastapi-limiter>=0.1.6",
     "apscheduler>=3.11.0",
 ]
 

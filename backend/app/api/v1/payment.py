@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 
 from app.api.deps import DbSession, require_role
+from app.core.rate_limit import RateLimiter
 from app.core.security import TokenPayload
 from app.services import payment_service
 from app.services.payment_service import (
@@ -19,7 +20,13 @@ router = APIRouter(prefix="/payment", tags=["Payment"])
 CustomerOnly = Annotated[TokenPayload, Depends(require_role("customer"))]
 
 
-@router.post("/checkout/{order_id}", summary="建立綠界付款（限顧客）")
+@router.post(
+    "/checkout/{order_id}",
+    summary="建立綠界付款（限顧客）",
+    # 沿用舊版的 3 per minute。反覆建立付款單除了浪費資源，
+    # 也可能被用來對金流商產生大量無效交易。
+    dependencies=[Depends(RateLimiter(times=3, seconds=60, scope="checkout"))],
+)
 async def checkout(order_id: int, db: DbSession, token: CustomerOnly) -> dict[str, Any]:
     """回傳前端送往綠界所需的表單參數與目標網址。"""
     try:

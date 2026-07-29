@@ -79,8 +79,15 @@ class Settings(BaseSettings):
     ECPAY_HASH_IV: str = "v77hoKGq4kWxNNIS"
     ECPAY_RETURN_URL: str = ""
 
+    # --- 限流 ---
+    RATE_LIMIT_ENABLED: bool = True
+
     # --- 背景排程 ---
+    SCHEDULER_ENABLED: bool = True
+    # 訂單建立後超過這個分鐘數仍未付款，就自動取消並釋放庫存
     UNPAID_ORDER_TIMEOUT_MINUTES: Annotated[int, Field(gt=0)] = 15
+    # 排程檢查間隔
+    SCHEDULER_INTERVAL_SECONDS: Annotated[int, Field(gt=0)] = 60
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -107,6 +114,32 @@ class Settings(BaseSettings):
                 ) from exc
 
         return [origin.strip() for origin in text.split(",") if origin.strip()]
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def _normalize_async_driver(cls, value: object) -> object:
+        """把同步的 Postgres driver 補成 asyncpg。
+
+        雲端平台（Render、Heroku、Railway…）注入的連線字串一律是
+        `postgresql://` 或 `postgres://`，兩者對 async SQLAlchemy 都不可用，
+        啟動時會拋 `InvalidRequestError: The asyncio extension requires an
+        async driver`。這個錯誤訊息與「連線字串沒設對」看起來很像，
+        實務上很容易在部署當下卡很久。
+
+        在這裡統一正規化，等於讓平台的預設值直接可用。
+        """
+        if not isinstance(value, str):
+            return value
+
+        for prefix in ("postgresql+asyncpg://", "postgresql+psycopg://"):
+            if value.startswith(prefix):
+                return value
+
+        for legacy_prefix in ("postgresql://", "postgres://"):
+            if value.startswith(legacy_prefix):
+                return "postgresql+asyncpg://" + value[len(legacy_prefix) :]
+
+        return value
 
     @field_validator("SECRET_KEY", "JWT_SECRET_KEY")
     @classmethod

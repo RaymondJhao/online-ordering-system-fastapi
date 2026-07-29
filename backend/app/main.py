@@ -13,6 +13,7 @@
    產生 OpenAPI 3.1，文件與驗證邏輯永遠同步。
 """
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -26,25 +27,38 @@ from app.api.v1 import api_router
 from app.core.config import Environment, get_settings
 from app.core.database import dispose_engine, get_db
 from app.core.redis import close_redis, get_redis
+from app.core.scheduler import create_scheduler
 
 # 在此呼叫一次：設定有誤時，應用程式會在啟動階段就失敗，而不是等到第一個請求。
 settings = get_settings()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """應用程式啟動與關閉時執行的工作。
 
-    後續階段會在這裡接上：
-      - Phase 4：AsyncIOScheduler 背景排程、fastapi-limiter 初始化
-
     資料庫與 Redis 的連線池都採 lazy 建立（第一個請求時才真正連線），
-    因此 startup 不需要動作；shutdown 則必須顯式關閉，
-    否則行程結束時會留下未關閉的連線。
+    因此 startup 只需要處理排程；shutdown 則必須顯式關閉所有資源，
+    否則行程結束時會留下未關閉的連線與仍在跑的排程執行緒。
     """
     # --- startup ---
+    scheduler = None
+    if settings.SCHEDULER_ENABLED:
+        scheduler = create_scheduler()
+        scheduler.start()
+        logger.info("背景排程已啟動，間隔 %d 秒", settings.SCHEDULER_INTERVAL_SECONDS)
+
     yield
+
     # --- shutdown ---
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
     await dispose_engine()
     await close_redis()
 

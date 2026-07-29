@@ -1,0 +1,32 @@
+# 沒有這份檔案，COPY . . 會把 .venv 與 legacy/ 一起帶進映像，
+# 體積暴增之外，.env 也可能被打包進去而外洩金鑰。
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 含金鑰，絕不可進入映像
+.env
+.env.local
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# 遷移期的 Flask 對照程式碼，不需要部署
+legacy/
+
+# 測試不在執行階段使用
+tests/
+
+.git/
+.gitignore
+.vscode/
+Dockerfile
+docker-compose.yml
+README.md
