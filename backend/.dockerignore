@@ -29,4 +29,6 @@ tests/
 .vscode/
 Dockerfile
 docker-compose.yml
-README.md
+
+# README.md 刻意「不」排除：pyproject.toml 的 `readme = "README.md"` 會讓
+# hatchling 在 build 階段讀取它，排除掉會導致 `pip install .` 失敗。

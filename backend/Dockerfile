@@ -13,7 +13,12 @@ WORKDIR /app
 
 # 先只複製相依定義：只要 pyproject.toml 沒變，這一層的快取就能重用，
 # 改程式碼時不必重裝所有套件。
-COPY pyproject.toml ./
+#
+# README.md 也必須複製：pyproject.toml 宣告了 `readme = "README.md"`，
+# hatchling 在產生 metadata 時會實際讀取這個檔案，缺少會直接失敗
+# （`OSError: Readme file does not exist: README.md`）。錯誤訊息不會提到
+# Dockerfile，很容易誤以為是相依套件的問題。
+COPY pyproject.toml README.md ./
 COPY app/__init__.py ./app/
 
 RUN python -m venv /opt/venv
