@@ -30,14 +30,14 @@ URL encode 的編碼差異，就是人工比對官方文件一個字元一個字
 
 ## 🎯 這個專案在解決什麼商業問題
 
-| 商業痛點（行銷/營運視角） | 對應的工程手法 |
-|---|---|
-| 促銷活動衝流量時，同一份庫存被兩筆訂單同時搶走，導致超賣、客訴 | 資料庫層級**原子扣減**（Atomic Decrement），用 rowcount 判斷成敗，而非「先讀庫存、程式判斷、再寫回」 |
-| 顧客網路延遲時連點兩次「送出訂單」，或手滑重複送出，導致重複建單、重複扣款 | 基於 **Idempotency-Key** 的冪等性設計，重送同一把 key 不會重複扣庫存 |
-| 商家後台把訂單狀態亂改（例如已完成的訂單被打回準備中），造成內外場資訊對不上 | 嚴格的**訂單狀態機**，用轉移表明確定義合法路徑，非法轉移一律拒絕並回傳 409 |
-| 顧客下單後不去付款，庫存被「假裝要買」的訂單卡住，其他人明明看得到菜單卻買不到 | **APScheduler** 背景排程，每分鐘自動釋出逾時 15 分鐘未付款的訂單庫存 |
-| 顧客竄改前端金額欺騙後端 | 後端**依資料庫單價重新計算**訂單總額，完全不信任前端傳來的價格 |
-| 惡意流量打爆下單/付款 API | **Flask-Limiter + Redis** 對關鍵端點做請求頻率限制 |
+| 商業痛點（行銷/營運視角）                                                      | 對應的工程手法                                                                                       |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| 促銷活動衝流量時，同一份庫存被兩筆訂單同時搶走，導致超賣、客訴                 | 資料庫層級**原子扣減**（Atomic Decrement），用 rowcount 判斷成敗，而非「先讀庫存、程式判斷、再寫回」 |
+| 顧客網路延遲時連點兩次「送出訂單」，或手滑重複送出，導致重複建單、重複扣款     | 基於 **Idempotency-Key** 的冪等性設計，重送同一把 key 不會重複扣庫存                                 |
+| 商家後台把訂單狀態亂改（例如已完成的訂單被打回準備中），造成內外場資訊對不上   | 嚴格的**訂單狀態機**，用轉移表明確定義合法路徑，非法轉移一律拒絕並回傳 409                           |
+| 顧客下單後不去付款，庫存被「假裝要買」的訂單卡住，其他人明明看得到菜單卻買不到 | **APScheduler** 背景排程，每分鐘自動釋出逾時 15 分鐘未付款的訂單庫存                                 |
+| 顧客竄改前端金額欺騙後端                                                       | 後端**依資料庫單價重新計算**訂單總額，完全不信任前端傳來的價格                                       |
+| 惡意流量打爆下單/付款 API                                                      | **Flask-Limiter + Redis** 對關鍵端點做請求頻率限制                                                   |
 
 ---
 
@@ -101,6 +101,7 @@ stateDiagram-v2
 ## 🔐 核心技術亮點
 
 ### 1. 高併發防護與資料一致性
+
 - **原子扣庫存**：單一 SQL `UPDATE menu_items SET stock = stock - :q WHERE id = :id AND stock >= :q`，
   靠 `rowcount` 判斷扣減是否成功，杜絕「讀取-判斷-寫入」中間的競態空隙。
 - **Idempotency-Key 冪等性**：下單 API 支援 `Idempotency-Key` header，重送同一把 key
@@ -109,6 +110,7 @@ stateDiagram-v2
 - **後端金額重算**：`total_price` 一律由後端依資料庫單價與優惠券規則重新計算，不信任前端傳來的任何金額欄位。
 
 ### 2. 資安與權限控管（RBAC）
+
 - JWT（`Flask-JWT-Extended`）區分 `customer` / `merchant` 兩種角色 claim，關鍵端點皆檢查角色。
 - 每筆訂單操作都驗證「操作者是否為該筆訂單的擁有者」（`order.customer_id` / `order.merchant_id`
   是否等於當前登入者），防止跨帳號存取他人訂單（IDOR）。
@@ -116,6 +118,7 @@ stateDiagram-v2
   搭配 `token_in_blocklist_loader` 讓已登出的 token 立即失效，而非純無狀態、永遠有效到過期為止。
 
 ### 3. 第三方金流整合（綠界 ECPay）
+
 - 完整實作 `CheckMacValue` 簽章演算法：參數排序 → 組字串 → URL encode → 修正
   **.NET 與 Python URL encode 在 `-`、`_`、`.`、`!`、`*`、`(`、`)` 這幾個字元上的編碼差異** → SHA256 → 轉大寫。
 - `ReturnURL` callback 端點**驗證 `CheckMacValue` 確認請求真的來自綠界**，而非任何人偽造的假付款通知。
@@ -123,6 +126,7 @@ stateDiagram-v2
 - Callback 判斷 `payment_status == UNPAID` 才更新為 `PAID`，天然具備冪等性，可安全承受綠界的重複通知。
 
 ### 4. 系統穩定性與自動化
+
 - **Flask-Limiter + Redis**：下單、結帳等關鍵端點做請求頻率限制；並實作「先嘗試連線 Redis，
   連不上才 fallback 回 in-memory」的降級策略，避免 Redis 容器沒啟動就讓整個 API 掛掉。
 - **APScheduler 背景排程**：每分鐘掃描一次，將建立超過 15 分鐘仍 `PENDING` 且 `UNPAID`
@@ -130,6 +134,7 @@ stateDiagram-v2
   並處理了 Flask debug reloader 會啟動兩個 process 導致排程重複執行的問題。
 
 ### 5. 測試與工程紀律
+
 - `pytest` 撰寫後端整合測試，涵蓋 Auth、Menu 與高併發下單情境（建單成功、庫存不足、
   冪等性重送、狀態機非法跳躍防護）。
 - **GitHub Actions CI**：push / PR 到 `main` 自動安裝依賴並跑 `pytest`，而非僅靠人工在本機驗證。
@@ -139,19 +144,19 @@ stateDiagram-v2
 
 ## 🧰 技術棧
 
-| 分類 | 技術 |
-|---|---|
-| 後端語言／框架 | Python 3.10、Flask 3 |
-| ORM／資料庫 | SQLAlchemy 2.0、MySQL 8（可替換 PostgreSQL） |
-| 快取／限流 | Redis、Flask-Limiter |
-| 認證 | Flask-JWT-Extended、Flask-Bcrypt |
-| 背景任務 | APScheduler |
-| 金流 | 綠界科技 ECPay（測試環境） |
-| API 文件 | Flasgger（Swagger UI） |
-| 測試／CI | pytest、pytest-flask、GitHub Actions |
-| 前端 | React 19、Vite、Tailwind CSS、React Router、Axios |
-| 前端測試 | Vitest、React Testing Library |
-| 容器化 | Docker Compose（MySQL + Redis） |
+| 分類           | 技術                                              |
+| -------------- | ------------------------------------------------- |
+| 後端語言／框架 | Python 3.10、Flask 3                              |
+| ORM／資料庫    | SQLAlchemy 2.0、MySQL 8（可替換 PostgreSQL）      |
+| 快取／限流     | Redis、Flask-Limiter                              |
+| 認證           | Flask-JWT-Extended、Flask-Bcrypt                  |
+| 背景任務       | APScheduler                                       |
+| 金流           | 綠界科技 ECPay（測試環境）                        |
+| API 文件       | Flasgger（Swagger UI）                            |
+| 測試／CI       | pytest、pytest-flask、GitHub Actions              |
+| 前端           | React 19、Vite、Tailwind CSS、React Router、Axios |
+| 前端測試       | Vitest、React Testing Library                     |
+| 容器化         | Docker Compose（MySQL + Redis）                   |
 
 ---
 
@@ -170,6 +175,7 @@ stateDiagram-v2
 ## 🚀 本機啟動方式
 
 ### 前置需求
+
 - Python 3.10+
 - Node.js 18+
 - Docker（用於啟動 MySQL / Redis，也可自行安裝本機服務）
@@ -223,4 +229,4 @@ npm run dev                   # 預設 http://localhost:5173
 
 ## 📜 授權
 
-MIT License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
