@@ -9,7 +9,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-117%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-121%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -184,7 +184,7 @@ security scheme，token 怎麼簽、怎麼驗、怎麼撤銷都要自己實作�
 
 ### 6. 測試與工程紀律
 
-- **117 個測試、93% 覆蓋率**，全部跑在真實 PostgreSQL 與 Redis 上而非模擬品
+- **121 個測試、約 93% 覆蓋率**，全部跑在真實 PostgreSQL 與 Redis 上而非模擬品
   （[ADR 0004](docs/adr/0004-unify-on-postgres.md) 說明為什麼）
 - 測試資料庫結構由 **Alembic 建立**（`downgrade base` + `upgrade head`），
   每次測試都順帶驗證 migration 可正確升級與回滾
@@ -215,6 +215,72 @@ security scheme，token 怎麼簽、怎麼驗、怎麼撤銷都要自己實作�
 - 修掉「每次 commit 都變成全檔案重寫」的 CRLF 問題，git history 恢復可讀
 
 完整的遷移計畫與逐階段紀錄：[docs/fastapi-migration-plan.md](docs/fastapi-migration-plan.md)
+
+---
+
+## 🔥 實際部署那一輪找到什麼
+
+遷移時逐行讀舊程式碼，找出四個缺陷。**實際部署一輪，又找出十個。**
+
+這一節記錄它們，但重點不是清單本身，而是一個更值得回答的問題：
+**為什麼 121 個跑在真實 Postgres 與 Redis 上的測試、加上一份寫得很細的部署設定，
+一個都沒攔住？** 十個缺陷依「為什麼本機抓不到」分類之後，答案就浮出來了。
+
+### 只有乾淨環境才會暴露
+
+| 缺陷 | 為什麼本機抓不到 |
+| --- | --- |
+| `pyproject.toml` 漏宣告 `pydantic[email]` | `EmailStr` 在**建立 model 類別時**就會 import `email_validator`。開發用的 venv 是長期累積出來的，從未在乾淨安裝下跑過一次完整 import。CI 第一次乾淨安裝就死在 conftest，而錯誤標題指向 conftest、真正的問題在 pyproject |
+| Dockerfile builder 缺 `README.md` | `pyproject.toml` 宣告了 `readme = "README.md"`，hatchling 產 metadata 時會實際開檔，而 `.dockerignore` 把它排除了。只有 Docker 的精簡 build context 會踩到，錯誤訊息完全不提 Dockerfile |
+
+### 只有讀官方文件才會知道
+
+| 缺陷 | 為什麼危險 |
+| --- | --- |
+| `preDeployCommand` **只開放付費方案** | 免費方案設了不會執行。部署顯示成功、服務正常啟動，schema 卻從未建立——直到第一個碰資料庫的請求才失敗。而它最可能發生在每 30 天重建資料庫之後，也就是「以為流程跑完了」的時候。已改為併入 `startCommand` |
+| 未釘住 `PYTHON_VERSION` | Render 的預設版本隨服務建立時間浮動（當時是 3.14.3），而 CI 與 Dockerfile 都是 3.12。等於正式環境跑一個從未驗證過的直譯器 |
+| Key Value 未指定 `region` | 預設 `oregon`，而 web service 是 `singapore`。Render 私有網路以 region 為界，跨區連不到。**`/health/live` 照樣回 200**（它刻意不檢查相依服務），只有 `/health/ready` 看得出來——這也剛好驗證了把 liveness 與 readiness 分開的價值 |
+
+### 只有真實流量才會暴露
+
+| 缺陷 | 說明 |
+| --- | --- |
+| **綠界回調的中文欄位編碼** | 綠界的 `Content-Type` 不帶 charset，Starlette 因此以 Latin-1 解碼 body，`RtnMsg` 的「交易成功」變成 mojibake；再用 UTF-8 重新編碼算 `CheckMacValue`，算的是亂碼的雜湊，簽章永遠不符。改為自行以 UTF-8 解析 raw body，且 `keep_blank_values=True` 不可省——空值欄位也要參與簽章計算 |
+| 前端誤用全域 `axios` | 兩個頁面直接呼叫 `axios.get()` 卻沒 import，是 Flask 時期以 `<script>` 載入的殘留。`npm run build` **不會擋**（Rollup 當它是外部全域），一進顧客首頁就 `ReferenceError`，畫面全白 |
+| 列表回應解析全錯 | Flask 版回 `{items}`／`{orders}`／`{order}`，FastAPI 版的 `response_model` 直接回裸陣列與裸物件。結帳頁的 `orderRes.data.order.id` 拋 TypeError（**訂單其實已經建立成功**）；商家訂單、庫存、優惠券三處則是靜默失敗——HTTP 200、畫面永遠空白、完全不報錯 |
+| 顧客登入被導向商家後台 | 商家後台登出時帶著 `state.from = "/merchant"`，而顧客分支無條件沿用 |
+| CI 缺兩個測試環境變數 | `RATE_LIMIT_ENABLED` / `SCHEDULER_ENABLED` 預設都是 `true`，測試套件卻假設基準為關閉。症狀是隨機的 429 |
+| `SimulatePaid=1` 未處理 | 綠界後台「模擬付款」發出的通知，官方明確要求不可變更訂單狀態。原本會被當成真實付款 |
+
+### 歸納出的兩個測試盲點
+
+這一節是整段裡最有價值的部分——它們是**結構性**的，不是漏寫幾個案例。
+
+**① 自產自驗的測試等於沒測。**
+金流測試用 `generate_check_mac_value` 產生簽章，端點再用**同一個函式**驗證。
+簽章演算法即使完全寫錯，測試也會全過——它驗的是自我一致性，不是正確性。
+修法是引入外部真值：補上綠界官方文件公布的標準向量與期望雜湊值。
+（實測結果是演算法本身正確，問題在 body 解碼——但沒有這個測試就無法確定。）
+
+**② 測試資料全是 ASCII，就測不到編碼路徑。**
+所有回調測試自組的 payload 都不含中文，所以 Latin-1 解碼那個 bug 在結構上
+就不可能被觸發。修法是用**原始 UTF-8 body 且不帶 charset** 送出，
+完整重現綠界的送法。
+
+### 診斷過程本身的紀錄
+
+簽章那個 bug 花了最久，過程值得留下來：前兩個推論（「500 被 CORS 遮蔽」、
+「冷啟動吞掉通知」）都被實際資料推翻，共同原因是在證據不足時往下推。
+真正收斂的轉折是**停止推測、改為增加可觀測性**——為回調的每條分支加上日誌，
+因為那個端點有三條路徑會回 `1|OK` 卻不更新任何資料，從外部無法區分
+「通知沒送到」與「送到了但被丟棄」。
+
+日誌一上線就把 mojibake 印出來了，然後用真實 payload 逐字重現：
+綠界送來的雜湊值 = 用還原後的「交易成功」計算的結果，
+我們算出的 = 用 mojibake 計算的結果。兩邊都吻合，沒有推測空間。
+
+**教訓很簡單：未部署的部署設定，等於未寫。** 這十個缺陷沒有一個是靠更用力
+寫測試就能預防的——它們需要的是一次真實的端到端執行。
 
 ---
 
@@ -431,7 +497,12 @@ CI 每次都會建置並做啟動 smoke test。
 
 ## 🗺️ 後續規劃（Roadmap）
 
-誠實列出目前的已知限制與下一步方向：
+誠實列出目前的已知限制與下一步方向。
+
+**這些項目刻意留在 Roadmap 而非實作。** 它們都清楚、也知道怎麼做，
+但這個專案的目標是把**核心正確性問題**（併發、金流、狀態機、認證）解決透徹，
+而不是做成一個功能完整的產品。把已知限制寫清楚並說明取捨，
+比把清單清空更能反映真實的工程情境——後者往往只是把邊界推到看不見的地方。
 
 - [ ] 訂單列表分頁（目前一次性回傳全部，累積量大後需優化）
 - [ ] `OrderStatusLog` 稽核紀錄表，追蹤誰在何時把訂單改成什麼狀態
@@ -445,7 +516,7 @@ CI 每次都會建置並做啟動 smoke test。
 
 已完成（原 Roadmap 項目）：
 
-- [x] 擴充測試覆蓋率——117 個測試、93% 覆蓋率，含併發、優惠券邊界、ECPay 驗簽失敗路徑
+- [x] 擴充測試覆蓋率——121 個測試、約 93% 覆蓋率，含併發、優惠券邊界、ECPay 驗簽失敗路徑
 
 ---
 
