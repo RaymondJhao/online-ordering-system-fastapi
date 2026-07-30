@@ -18,8 +18,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +74,38 @@ app = FastAPI(
     redoc_url=None if settings.is_production else "/redoc",
     openapi_url=None if settings.is_production else "/openapi.json",
 )
+
+
+# ---------------------------------------------------------------------------
+# 未處理例外的回應
+# ---------------------------------------------------------------------------
+# 這段**必須寫在 CORSMiddleware 之前**，順序是這個修正的全部重點。
+#
+# 問題：Starlette 的中介層堆疊是
+#     ServerErrorMiddleware → 使用者中介層（CORS）→ ExceptionMiddleware → 路由
+# 而 `ServerErrorMiddleware` 在最外層。未處理的例外由它產生 500 回應，
+# 因此**不會經過 CORSMiddleware**，回應沒有 Access-Control-Allow-Origin。
+# 瀏覽器直接擋掉，前端的 axios 看不到 response，`extractErrorMessage()` 只能
+# 回報「無法連線到伺服器」——所有伺服器錯誤都被誤報成網路問題，指錯方向。
+#
+# 注意 `@app.exception_handler(Exception)` **解決不了這件事**：FastAPI 會把
+# Exception 的處理器交給 ServerErrorMiddleware，位置仍在 CORS 之外。
+#
+# 解法是自己攔在 CORS 內層。`add_middleware` 會插到列表最前面，而列表第一項
+# 是最外層——所以先註冊的在內層。這個攔截器先註冊、CORS 後註冊，
+# 回應就會在往外走的路上被補上 CORS header。
+@app.middleware("http")
+async def _json_response_on_unhandled_error(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        # 這裡吞掉例外，因此 traceback 只剩這一份紀錄，不能省
+        logger.exception("未處理的例外：%s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "伺服器內部錯誤"},
+        )
+
 
 app.add_middleware(
     CORSMiddleware,

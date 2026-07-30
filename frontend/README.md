@@ -95,30 +95,58 @@ npm run dev
 ```js
 server: {
   proxy: {
-    '/api': {
-      target: 'http://localhost:5000',
-      changeOrigin: true,
-    },
+    '/api': { target: 'http://localhost:8000', changeOrigin: true },
+    '/health': { target: 'http://localhost:8000', changeOrigin: true },
   },
 },
 ```
 
-前端程式碼裡打 API 一律用相對路徑（例如 `axios.get('/api/inventory')`，見
-`src/lib/axios.js` 與各頁面元件），開發模式下 Vite dev server 會把所有 `/api/*`
-請求原樣轉發到本機 Flask 後端（預設 `http://localhost:5000`）。這代表：
+**所有 API 呼叫都要走 `src/lib/api.js` 匯出的 `api` 實例**，不要直接用 `axios`：
 
-- 瀏覽器實際上只跟 `localhost:5173`（前端自己）通訊，不會直接打
-  `localhost:5000`，所以**不會觸發瀏覽器的 CORS 檢查**，後端也不需要另外裝
-  `flask-cors` 處理開發環境的跨來源問題。
-- 如果後端沒有跑在預設的 5000 port，記得同步修改這裡的 `target`。
-- 正式環境（`npm run build` 產出的靜態檔案）不會經過 Vite dev server，需要在
-  反向代理（Nginx 等）或後端本身處理 `/api` 路由與 CORS。
+```js
+import api, { asList } from '../lib/api'
 
-### 4. 登入測試帳號
+const res = await api.get('/api/menu')
+setItems(asList(res.data))
+```
+
+這個實例做了三件單靠 `axios` 拿不到的事：
+
+1. **`baseURL`** 取自 `VITE_API_BASE_URL`。本機留空時走相對路徑，由上面的 proxy
+   轉發到 `localhost:8000`（uvicorn 的預設 port，Flask 時期是 5000），瀏覽器
+   只跟 `localhost:5173` 通訊，因此不觸發 CORS 檢查
+2. **401 單飛 refresh**——access token 只有 15 分鐘。多個請求同時 refresh 會觸發
+   後端的 token 重用偵測而導致整個登入階段被撤銷，所以用單一 promise 收斂。
+   **不要拆掉這段**
+3. **Authorization header** 由 request interceptor 自動附加
+
+> 直接用全域 `axios` 曾經造成一個實際的線上故障：`axios` 沒有 import 卻能通過
+> build（Rollup 當它是外部全域），一進顧客首頁就 `ReferenceError` 而畫面全白。
+> 就算 import 了，裸 `axios` 也沒有 baseURL——請求會打到前端自己的網域而 404。
+
+錯誤訊息一律用 `src/lib/errors.js` 的 `extractErrorMessage()`：FastAPI 回的是
+`detail` 而非 `message`，且 422 的 `detail` 是陣列，直接塞進 JSX 會顯示成
+`[object Object]`。
+
+列表回應一律用 `asList()`：後端的 `response_model` 是 `list[...]`，直接回**裸陣列**，
+不是 Flask 時期的 `{items: [...]}` 包裝。讀錯的症狀是 HTTP 200、畫面永遠空白、
+且不報任何錯。
+
+### 4. 正式環境
+
+不經過 Vite dev server，因此**必須**設定 `VITE_API_BASE_URL` 指向後端網址
+（只要 origin，不含 `/api`）。跨來源改由後端的 `CORSMiddleware` 處理，
+需在後端設定 `CORS_ORIGINS` 與 `CORS_ORIGIN_REGEX`。詳見根目錄 README 的部署章節。
+
+Vite 是**建置時**把環境變數編進 JS 的，修改後必須重新部署才會生效。
+
+### 5. 登入測試帳號
 
 前端本身不建立帳號資料，請先參考
-[`backend/README.md`](../backend/README.md) 執行 `seed_menu_items.py` 灌入測試商家／
-顧客帳號後，再從 `/auth` 頁面登入。
+[`backend/README.md`](../backend/README.md) 執行 `python -m scripts.seed` 灌入
+測試商家／顧客帳號（`merchant@test.com`／`customer@test.com`，密碼皆為
+`test1234`），再從 `/auth` 頁面登入。**登入頁的角色切換鈕決定要查哪張資料表**，
+選錯角色會驗證失敗。
 
 ---
 
@@ -134,7 +162,8 @@ frontend/
 │   ├── context/
 │   │   └── CartContext.jsx   # 購物車狀態 + localStorage 同步
 │   ├── lib/
-│   │   └── axios.js          # 全域 axios interceptor：自動帶入 JWT Authorization header
+│   │   ├── api.js            # axios 實例：baseURL、401 單飛 refresh、asList()
+│   │   └── errors.js         # extractErrorMessage()：處理 FastAPI 的 detail 格式
 │   ├── pages/                # 每個路由對應一支檔案，負責資料抓取與頁面組裝
 │   │   ├── CustomerMenu.jsx
 │   │   ├── Checkout.jsx

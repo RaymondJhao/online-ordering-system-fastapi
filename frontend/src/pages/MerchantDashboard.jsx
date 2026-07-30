@@ -70,8 +70,20 @@ function MerchantDashboard() {
       handleAuthError();
       return;
     }
+
+    // 只檢查 token 存在是不夠的：顧客的 token 也能讓這一頁渲染出來，
+    // 然後每個 API 呼叫都被後端以 403 擋下，畫面變成一片錯誤訊息，
+    // 而使用者完全不知道自己走錯了地方。
+    //
+    // 這純粹是導向用的檢查，不是權限控管——真正的守門人是後端的
+    // require_role，這個值可以被偽造（見 tokenStorage.role 的說明）。
+    if (tokenStorage.role !== "merchant") {
+      navigate("/", { replace: true });
+      return;
+    }
+
     fetchInventory();
-  }, [handleAuthError, fetchInventory]);
+  }, [handleAuthError, fetchInventory, navigate]);
 
   const handlePosOrderCreated = () => {
     fetchInventory();

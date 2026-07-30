@@ -40,6 +40,31 @@ export const tokenStorage = {
   get isLoggedIn() {
     return !!localStorage.getItem(ACCESS_TOKEN_KEY)
   },
+
+  /**
+   * 從 access token 的 payload 讀出角色，**僅供前端導向使用**。
+   *
+   * 刻意不驗證簽章：瀏覽器端沒有金鑰，也不該有。真正的權限控管在後端的
+   * `require_role` 依賴，那才是唯一的守門人。
+   *
+   * 這個值可以被使用者自行偽造，而偽造的唯一後果是看到一個所有請求都被
+   * 後端以 403 擋下的空介面——也就是不用這個檢查時的現狀。加上它的目的
+   * 只是避免使用者走錯頁面卻不知道自己走錯了。
+   */
+  get role() {
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY)
+    if (!token) return null
+
+    try {
+      // JWT 用的是 base64url，atob 只吃標準 base64，需要換回來並補齊 padding
+      const raw = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+      const padded = raw.padEnd(raw.length + ((4 - (raw.length % 4)) % 4), '=')
+      return JSON.parse(atob(padded)).role ?? null
+    } catch {
+      // 格式壞掉就當作不知道角色，交給後端處理
+      return null
+    }
+  },
 }
 
 api.interceptors.request.use((config) => {

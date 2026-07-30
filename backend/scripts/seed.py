@@ -170,6 +170,14 @@ async def create_scenario_orders(
         )
         order.order_items.append(OrderItem(menu_item_id=item.id, quantity=1, price=item.price))
         db.add(order)
+
+        # 這裡直接建立 model 而不經過 order_service，所以要自己把庫存扣掉。
+        #
+        # 少了這一行，展示資料會自相矛盾：訂單存在但庫存沒少，而「逾時未付款」
+        # 那筆一被排程取消就會**回補**庫存，於是數字比原始設定值還多。
+        # （實際部署後就是這樣發現的：設定 50，線上顯示 51。）
+        item.stock -= 1
+
         print(f"  情境訂單：{label}")
 
     await db.flush()

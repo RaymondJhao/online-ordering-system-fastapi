@@ -139,3 +139,41 @@ def test_正式環境不接受過低的_bcrypt_成本因子() -> None:
 
     with pytest.raises(ValidationError):
         Settings(**common, ENVIRONMENT="production")
+
+
+# ---------------------------------------------------------------------------
+# 未處理例外的回應
+# ---------------------------------------------------------------------------
+
+
+async def test_未處理例外的500回應必須帶上CORS_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    """500 回應少了 CORS header，前端就看不到真正的錯誤。
+
+    Starlette 的 `ServerErrorMiddleware` 在使用者中介層**之外**，所以未處理
+    例外產生的 500 不會經過 `CORSMiddleware`。瀏覽器擋掉之後，axios 拿不到
+    response，`extractErrorMessage()` 只能回報「無法連線到伺服器」——
+    所有伺服器錯誤都被誤報成網路問題，把人指向完全錯誤的方向。
+
+    修正的關鍵**只在中介層的註冊順序**：攔截器要先註冊（因此在內層），
+    CORS 後註冊（因此在外層），回應才會在往外走時被補上 header。
+    順序寫反等於沒改，而且從測試以外的地方看不出差別——所以需要這個測試。
+
+    注意 `@app.exception_handler(Exception)` 解決不了這件事：FastAPI 會把
+    Exception 的處理器交給 ServerErrorMiddleware，位置仍在 CORS 之外。
+    """
+    from app.services import menu_service
+
+    async def _boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("刻意觸發未處理的例外")
+
+    monkeypatch.setattr(menu_service, "list_public_menu", _boom)
+
+    origin = "http://localhost:5173"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/menu", headers={"Origin": origin})
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "伺服器內部錯誤"}
+    assert response.headers.get("access-control-allow-origin") == origin, (
+        "500 回應少了 CORS header，前端會把伺服器錯誤誤判成網路問題"
+    )

@@ -14,9 +14,9 @@ jobs:
     name: Lint (ruff)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -85,9 +85,9 @@ jobs:
       SCHEDULER_ENABLED: "false"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -115,8 +115,12 @@ jobs:
     name: Docker build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
+      # 這兩個 docker action 仍以 Node 20 為目標，因此還會出現 deprecation 警告。
+      # 刻意不動：我沒有查證過 Docker 官方有無對應的 Node 24 版本，
+      # 而在 CI 裡猜一個不存在的 tag 會直接讓 job 失敗。
+      # Node 20 於 2026-09-16 才會從 runner 移除，在那之前只是警告，不影響結果。
       - uses: docker/setup-buildx-action@v3
 
       # 建置成功本身就是驗證：多階段建置、pyproject 打包、非 root 使用者
