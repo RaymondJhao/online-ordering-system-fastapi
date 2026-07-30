@@ -45,10 +45,13 @@ function CustomerOrders() {
       return
     }
 
-    axios
+    api
       .get('/api/orders')
       .then((res) => {
-        setOrders(res.data.orders ?? [])
+        // 後端的 response_model 是 list[OrderResponse]，直接回陣列而非
+        // { orders: [...] }。原本只讀 res.data.orders，永遠拿到 undefined，
+        // 結果是「請求成功但訂單列表一直是空的」——不會報錯，最難發現的那種。
+        setOrders(Array.isArray(res.data) ? res.data : (res.data.orders ?? []))
       })
       .catch(() => {
         setError('無法取得訂單紀錄，請稍後再試')

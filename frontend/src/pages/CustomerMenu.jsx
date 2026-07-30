@@ -54,7 +54,7 @@ function CustomerMenu() {
   }, [showAuthAlert, navigate])
 
   useEffect(() => {
-    axios
+    api
       .get('/api/menu')
       .then((res) => {
         const items = Array.isArray(res.data) ? res.data : res.data.items ?? []
