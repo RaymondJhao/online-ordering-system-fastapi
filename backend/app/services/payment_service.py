@@ -71,6 +71,21 @@ async def build_checkout_params(
     return params
 
 
+def _redacted_for_log(data: dict[str, str]) -> list[tuple[str, str]]:
+    """把回調內容整理成可寫進日誌的形式，並遮蔽卡號相關欄位。
+
+    簽章不符時，只知道欄位「名稱」是不夠的——問題幾乎都出在某個欄位的**值**
+    含有編碼行為不一致的字元。要定位就必須看得到實際內容。
+
+    綠界的信用卡通知會帶 card4no／card6no（卡號的前六後四）。那是持卡人資料，
+    不該進日誌，因此一律遮蔽。其餘欄位都是交易中介資料，記錄無妨。
+    """
+    return [
+        (key, "<redacted>" if "card" in key.lower() else value)
+        for key, value in sorted(data.items())
+    ]
+
+
 async def handle_callback(db: AsyncSession, form_data: dict[str, str]) -> bool:
     """處理綠界的付款結果通知，回傳是否成功受理。
 
@@ -102,10 +117,10 @@ async def handle_callback(db: AsyncSession, form_data: dict[str, str]) -> bool:
         # 而不是遭到竄改；沒有實際數值可比對，這種問題無從下手。
         # 金鑰本身不會出現在日誌裡，雜湊值不足以反推。
         logger.warning(
-            "綠界回調簽章不符：received=%s expected=%s 參與計算的欄位=%s",
+            "綠界回調簽章不符：received=%s expected=%s 參與計算的內容=%s",
             received_mac,
             expected_mac,
-            sorted(data),
+            _redacted_for_log(data),
         )
         return False
 

@@ -192,3 +192,39 @@ def test_CheckMacValue_對內容變動敏感() -> None:
 
     assert generate_check_mac_value(base) != generate_check_mac_value(changed)
     assert generate_check_mac_value(base) == generate_check_mac_value(dict(base))
+
+
+def test_CheckMacValue_符合綠界官方文件的標準範例() -> None:
+    """用綠界文件公布的範例與期望值驗證算法本身。
+
+    這個測試補的是一個結構性缺口：本檔其他測試（包含 _signed_callback）都是
+    **用同一個函式產生簽章、再用同一個函式驗證**。算法即使完全寫錯，那些測試
+    仍然全過——它們驗的是自我一致性，不是正確性。
+
+    真正會出錯的地方是編碼細節：綠界要求的是 .NET 的 UrlEncode 行為，而 Python
+    的 quote_plus 對 `!`、`*`、`(`、`)`、`~` 等字元的處理與之不同。少了對外部
+    已知答案的比對，這類差異只有在實際串接時才會浮現，而症狀是「簽章不符」，
+    完全看不出是哪個字元造成的。
+
+    範例出自官方文件〈檢查碼機制說明〉：
+    https://developers.ecpay.com.tw/2902/
+    """
+    params = {
+        "TradeDesc": "促銷方案",
+        "PaymentType": "aio",
+        "MerchantTradeDate": "2023/03/12 15:30:23",
+        "MerchantTradeNo": "ecpay20230312153023",
+        "MerchantID": "3002607",
+        "ReturnURL": "https://www.ecpay.com.tw/receive.php",
+        "ItemName": "Apple iphone 15",
+        "TotalAmount": "30000",
+        "ChoosePayment": "ALL",
+        "EncryptType": "1",
+    }
+
+    # 文件範例使用的是它自己的一組金鑰，不是本專案設定裡的測試金鑰
+    actual = generate_check_mac_value(
+        params, hash_key="pwFHCqoQZGmho4w6", hash_iv="EkRm7iFT261dpevs"
+    )
+
+    assert actual == "6C51C9E6888DE861FD62FB1DD17029FC742634498FD813DC43D4243B5685B840"
