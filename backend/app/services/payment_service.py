@@ -1,5 +1,6 @@
 """綠界金流串接。"""
 
+import logging
 import time
 from datetime import datetime
 from typing import Any
@@ -11,6 +12,8 @@ from app.models import Order, OrderStatus, PaymentMethod, PaymentStatus
 from app.utils.ecpay import generate_check_mac_value
 
 ECPAY_CHECKOUT_URL = "https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5"
+
+logger = logging.getLogger(__name__)
 
 
 class OrderNotFoundError(Exception):
@@ -72,26 +75,64 @@ async def handle_callback(db: AsyncSession, form_data: dict[str, str]) -> bool:
     data = dict(form_data)
     received_mac = data.pop("CheckMacValue", None)
 
-    if not received_mac or received_mac != generate_check_mac_value(data):
+    # 這裡的每一條 return 都必須留下紀錄。這個端點的所有失敗路徑都回 HTTP 200
+    # （綠界只看回應內容是 1|OK 還是 0|Error），而其中三條會回 1|OK 卻不更新
+    # 任何資料——綠界因此認定通知成功、不再重送，付款狀態卻永遠停在 UNPAID。
+    # 沒有日誌的話，這個組合從外部完全無法區分「通知沒送到」與「送到了但被丟棄」。
+    logger.info(
+        "收到綠界回調：MerchantTradeNo=%s RtnCode=%s CustomField1=%s",
+        data.get("MerchantTradeNo"),
+        data.get("RtnCode"),
+        data.get("CustomField1"),
+    )
+
+    if not received_mac:
+        logger.warning("綠界回調缺少 CheckMacValue，已拒絕")
+        return False
+
+    expected_mac = generate_check_mac_value(data)
+    if received_mac != expected_mac:
+        # 刻意記下兩個雜湊值。簽章不符的原因幾乎都是參數集合或編碼細節有落差，
+        # 而不是遭到竄改；沒有實際數值可比對，這種問題無從下手。
+        # 金鑰本身不會出現在日誌裡，雜湊值不足以反推。
+        logger.warning(
+            "綠界回調簽章不符：received=%s expected=%s 參與計算的欄位=%s",
+            received_mac,
+            expected_mac,
+            sorted(data),
+        )
         return False
 
     if data.get("RtnCode") != "1":
         # 付款失敗的通知也要回 1|OK，否則綠界會持續重送
+        logger.info(
+            "綠界回報付款未成功：RtnCode=%s RtnMsg=%s", data.get("RtnCode"), data.get("RtnMsg")
+        )
         return True
 
     raw_order_id = data.get("CustomField1")
     if not raw_order_id or not raw_order_id.isdigit():
+        logger.error("綠界回調的 CustomField1 無法解析為訂單編號：%r", raw_order_id)
         return True
 
     order = await db.get(Order, int(raw_order_id))
 
-    # 綠界可能重送同一筆通知，因此只在仍是 UNPAID 時更新，天然具備冪等性
-    if order is not None and order.payment_status is PaymentStatus.UNPAID:
-        try:
-            order.payment_status = PaymentStatus.PAID
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            return False
+    if order is None:
+        logger.error("綠界回調指向不存在的訂單：id=%s", raw_order_id)
+        return True
 
+    # 綠界可能重送同一筆通知，因此只在仍是 UNPAID 時更新，天然具備冪等性
+    if order.payment_status is not PaymentStatus.UNPAID:
+        logger.info("訂單 %s 的付款狀態已是 %s，略過（綠界重送）", order.id, order.payment_status)
+        return True
+
+    try:
+        order.payment_status = PaymentStatus.PAID
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("更新訂單 %s 付款狀態時失敗，已 rollback", order.id)
+        return False
+
+    logger.info("訂單 %s 已標記為已付款", order.id)
     return True
