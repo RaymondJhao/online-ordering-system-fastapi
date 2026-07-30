@@ -1,5 +1,7 @@
 """金流端點與綠界回調驗證。"""
 
+from urllib.parse import urlencode
+
 from httpx import AsyncClient
 
 from app.utils.ecpay import generate_check_mac_value
@@ -192,6 +194,88 @@ def test_CheckMacValue_對內容變動敏感() -> None:
 
     assert generate_check_mac_value(base) != generate_check_mac_value(changed)
     assert generate_check_mac_value(base) == generate_check_mac_value(dict(base))
+
+
+async def test_回調的中文欄位不會因編碼而導致簽章不符(
+    client: AsyncClient, customer_session: dict, merchant_session: dict, merchant_menu_item: dict
+) -> None:
+    """用真實抓到的綠界 payload 驗證中文欄位的解碼。
+
+    這是實際部署後才發現的 bug，值得完整記下來：
+
+    綠界成功付款時 `RtnMsg` 是「交易成功」，而它的 Content-Type 沒有帶 charset。
+    Starlette 的 `request.form()` 於是以 Latin-1 解碼 body，中文變成 mojibake
+    （'äº¤æ\\x98\\x93æ\\x88\\x90å\\x8a\\x9f'）。端點接著用 UTF-8 重新編碼去算
+    CheckMacValue，算的是亂碼的雜湊，於是簽章永遠不符、訂單永遠停在 UNPAID。
+
+    為什麼既有測試全都抓不到：本檔其他測試自己組的 payload 全是 ASCII，
+    根本不會經過中文的編解碼路徑。這個測試刻意用**原始 UTF-8 body** 送出，
+    走的是與綠界完全相同的路徑。
+
+    空值欄位（CustomField2~4、StoreID）也一併保留：它們要參與簽章計算，
+    parse_qsl 預設會丟掉空值。
+    """
+    order = await _place_order(
+        client, customer_session, merchant_session["user"]["id"], merchant_menu_item["id"]
+    )
+    order_id = order.json()["id"]
+
+    payload = {
+        "CustomField1": str(order_id),
+        "CustomField2": "",
+        "CustomField3": "",
+        "CustomField4": "",
+        "MerchantID": "3002607",
+        "MerchantTradeNo": f"ORD{order_id}1785405531",
+        "PaymentDate": "2026/07/30 17:59:03",
+        "PaymentType": "Credit_CreditCard",
+        "PaymentTypeChargeFee": "8",
+        "RtnCode": "1",
+        "RtnMsg": "交易成功",
+        "SimulatePaid": "0",
+        "StoreID": "",
+        "TradeAmt": "120",
+        "TradeDate": "2026/07/30 17:58:51",
+        "TradeNo": "2607301758517385",
+    }
+    payload["CheckMacValue"] = generate_check_mac_value(payload)
+
+    # 刻意不用 data=，而是自己組 UTF-8 的 urlencoded body 並省略 charset，
+    # 完整重現綠界的送法
+    body = urlencode(payload, encoding="utf-8")
+    response = await client.post(
+        "/api/payment/callback",
+        content=body.encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.text == "1|OK", "中文欄位的簽章驗證失敗，檢查 body 的解碼方式"
+
+    orders = await client.get("/api/orders", headers=auth_headers(customer_session))
+    assert next(o for o in orders.json() if o["id"] == order_id)["payment_status"] == "PAID"
+
+
+async def test_模擬付款通知不會變更訂單狀態(
+    client: AsyncClient, customer_session: dict, merchant_session: dict, merchant_menu_item: dict
+) -> None:
+    """SimulatePaid=1 是後台的「模擬付款」，官方要求不可變更訂單狀態。"""
+    order = await _place_order(
+        client, customer_session, merchant_session["user"]["id"], merchant_menu_item["id"]
+    )
+    order_id = order.json()["id"]
+
+    payload = _signed_callback(order_id)
+    payload = {**payload, "SimulatePaid": "1"}
+    payload["CheckMacValue"] = generate_check_mac_value(
+        {k: v for k, v in payload.items() if k != "CheckMacValue"}
+    )
+
+    response = await client.post("/api/payment/callback", data=payload)
+
+    assert response.text == "1|OK", "仍要回 1|OK，這個通知的用途是確認可達性"
+
+    orders = await client.get("/api/orders", headers=auth_headers(customer_session))
+    assert next(o for o in orders.json() if o["id"] == order_id)["payment_status"] == "UNPAID"
 
 
 def test_CheckMacValue_符合綠界官方文件的標準範例() -> None:

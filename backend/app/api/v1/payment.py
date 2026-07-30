@@ -1,6 +1,7 @@
 """金流端點。"""
 
 from typing import Annotated, Any
+from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
@@ -58,9 +59,21 @@ async def ecpay_callback(request: Request, db: DbSession) -> PlainTextResponse:
     2. 請求是 form-encoded 而非 JSON
     3. 回應必須是純文字 "1|OK"／"0|Error"，不是 JSON。
        回傳 JSON 會讓綠界判定通知失敗並持續重送。
+
+    **不要改用 `await request.form()`。** 綠界的 Content-Type 沒有帶 charset，
+    Starlette 於是以 Latin-1 解碼 body，中文欄位會變成 mojibake：`RtnMsg`
+    的「交易成功」會解成 'äº¤æ\\x98\\x93æ\\x88\\x90å\\x8a\\x9f'。我們接著用 UTF-8
+    重新編碼去算 CheckMacValue，算的就是亂碼的雜湊，簽章永遠對不上。
+
+    這個 bug 在正式部署前完全隱形：單元測試自己組的 payload 是 ASCII，
+    不會觸發；而線上的症狀只是「簽章不符」，看不出跟編碼有關。
+
+    `keep_blank_values=True` 同樣不可省。綠界會回傳空值欄位
+    （CustomField2~4、StoreID），而它們**要參與 CheckMacValue 計算**；
+    parse_qsl 預設會把空值丟掉，少了它們簽章一樣算不對。
     """
-    form = await request.form()
-    form_data = {key: str(value) for key, value in form.items()}
+    raw_body = await request.body()
+    form_data = dict(parse_qsl(raw_body.decode("utf-8"), keep_blank_values=True))
 
     accepted = await payment_service.handle_callback(db, form_data)
     return PlainTextResponse("1|OK" if accepted else "0|Error")
