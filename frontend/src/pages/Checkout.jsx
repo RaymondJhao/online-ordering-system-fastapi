@@ -63,7 +63,12 @@ function Checkout() {
         coupon_code: couponCode.trim() || undefined,
       })
 
-      const orderId = orderRes.data.order.id
+      // 後端的 response_model 是 OrderResponse，直接回訂單物件本身。
+      // 原本寫 orderRes.data.order.id 是 Flask 版 `{order: {...}}` 的殘留，
+      // 在這裡會拋 TypeError——而訂單其實已經建立成功了。
+      // 於是使用者看到「失敗」、訂單列表卻多一筆，且因為 TypeError 沒有
+      // error.response，訊息會退化成「無法連線到伺服器」，完全指錯方向。
+      const orderId = orderRes.data.id
 
       if (paymentMethod === 'CASH') {
         clearCart()

@@ -115,4 +115,21 @@ api.interceptors.response.use(
   },
 )
 
+/**
+ * 把列表型回應正規化成陣列。
+ *
+ * 遷移留下的坑：Flask 版的列表端點回的是包裝物件——`{items: [...]}`、
+ * `{orders: [...]}`、`{coupons: [...]}`。FastAPI 版全部改成
+ * `response_model=list[...]`，直接回裸陣列。
+ *
+ * 前端當時只改了一部分呼叫點，其餘仍在讀 `res.data.orders`，取到 undefined
+ * 後退回 `[]`。症狀是**請求成功、HTTP 200、畫面卻永遠是空的，而且不報任何錯**
+ * ——比拋例外難發現得多。
+ *
+ * 集中成一個函式，是為了讓「這裡回的是陣列」這件事只需要在一個地方成立。
+ */
+export function asList(data) {
+  return Array.isArray(data) ? data : []
+}
+
 export default api

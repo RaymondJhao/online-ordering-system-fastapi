@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import api from "../../lib/api";
+import api, { asList } from "../../lib/api";
 import { extractErrorMessage } from "../../lib/errors";
 import { Plus } from "lucide-react";
 
@@ -21,7 +21,7 @@ function CouponPanel({ onAuthError }) {
   const fetchCoupons = useCallback(async () => {
     try {
       const res = await api.get("/api/coupons");
-      setCoupons(res.data.coupons ?? []);
+      setCoupons(asList(res.data));
       setError(null);
     } catch (err) {
       if (err.response?.status === 401) {

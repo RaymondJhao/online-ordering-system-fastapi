@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api, { tokenStorage } from "../lib/api";
+import api, { asList, tokenStorage } from "../lib/api";
 import { extractErrorMessage } from "../lib/errors";
 import {
   LayoutDashboard,
@@ -51,7 +51,7 @@ function MerchantDashboard() {
   const fetchInventory = useCallback(async () => {
     try {
       const res = await api.get("/api/inventory");
-      setInventoryItems(res.data.items ?? []);
+      setInventoryItems(asList(res.data));
       setInventoryError(null);
       setInventoryUpdatedAt(new Date());
     } catch (err) {

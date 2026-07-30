@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import api, { tokenStorage } from "../lib/api";
+import api, { asList, tokenStorage } from "../lib/api";
 
 const STATUS_LABELS = {
   PENDING: '待商家確認',
@@ -51,7 +51,7 @@ function CustomerOrders() {
         // 後端的 response_model 是 list[OrderResponse]，直接回陣列而非
         // { orders: [...] }。原本只讀 res.data.orders，永遠拿到 undefined，
         // 結果是「請求成功但訂單列表一直是空的」——不會報錯，最難發現的那種。
-        setOrders(Array.isArray(res.data) ? res.data : (res.data.orders ?? []))
+        setOrders(asList(res.data))
       })
       .catch(() => {
         setError('無法取得訂單紀錄，請稍後再試')

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import api, { tokenStorage } from "../lib/api";
+import api, { asList, tokenStorage } from "../lib/api";
 import { ShoppingCart, Plus, Minus, X, User, LogOut, ClipboardList } from 'lucide-react'
 import { useCart } from '../context/CartContext'
 
@@ -57,7 +57,7 @@ function CustomerMenu() {
     api
       .get('/api/menu')
       .then((res) => {
-        const items = Array.isArray(res.data) ? res.data : res.data.items ?? []
+        const items = asList(res.data)
         setMenuItems(items)
       })
       .catch(() => {

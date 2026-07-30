@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import api from "../../lib/api";
+import api, { asList } from "../../lib/api";
 import { extractErrorMessage } from "../../lib/errors";
 import {
   Clock,
@@ -458,7 +458,7 @@ function OrderList({ onAuthError }) {
   const fetchOrders = useCallback(async () => {
     try {
       const res = await api.get("/api/orders");
-      setOrders(res.data.orders ?? []);
+      setOrders(asList(res.data));
       setError(null);
       setLastUpdatedAt(new Date());
     } catch (err) {
