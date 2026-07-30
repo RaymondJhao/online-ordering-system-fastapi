@@ -3,6 +3,9 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import api, { tokenStorage } from "../lib/api";
 import { extractErrorMessage } from "../lib/errors";
 
+// 顧客登入後允許被導回的路徑。見 handleLogin 的說明。
+const CUSTOMER_REDIRECTS = ['/checkout', '/orders']
+
 function Auth() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -40,7 +43,17 @@ function Auth() {
     if (role === 'merchant') {
       navigate('/merchant', { replace: true })
     } else {
-      navigate(location.state?.from ?? '/', { replace: true })
+      // 只採用屬於顧客區的來源路徑。
+      //
+      // 商家後台在登出與遇到認證錯誤時，都會帶著 state.from = '/merchant'
+      // 導回登入頁。若這裡無條件沿用 from，「登出商家 → 用顧客帳號登入」
+      // 就會把顧客送進商家後台——頁面渲染得出來（那裡只檢查有沒有 token，
+      // 沒檢查角色），但每個 API 呼叫都會被後端以 403 擋掉。
+      //
+      // 用允許清單而非排除清單：日後新增商家路由時不必回來補，
+      // 未列入的來源一律退回首頁，是安全的預設行為。
+      const from = location.state?.from
+      navigate(CUSTOMER_REDIRECTS.includes(from) ? from : '/', { replace: true })
     }
   }
 
