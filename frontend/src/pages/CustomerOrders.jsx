@@ -32,33 +32,72 @@ function formatDateTime(value) {
   })
 }
 
+// 綠界的付款結果是伺服器對伺服器通知（ReturnURL），跟「使用者回到這一頁」
+// 是兩條獨立的路徑，沒有先後保證。後端在免費方案上閒置會休眠，第一次回調
+// 常撞上 30–60 秒的冷啟動而逾時，綠界重送後才會成功——使用者往往比通知先到。
+//
+// 少了輪詢，畫面會停在「尚未付款」，而使用者沒有理由知道該重新整理。
+// 上限刻意設得保守：只在真的有等待中的線上付款訂單時才輪詢，
+// 問完就停，不做無止境的背景請求。
+const POLL_INTERVAL_MS = 3000
+const POLL_MAX_ATTEMPTS = 12
+
+function hasPendingOnlinePayment(orders) {
+  return orders.some(
+    (order) =>
+      order.payment_method === 'ONLINE' &&
+      order.payment_status === 'UNPAID' &&
+      order.status === 'PENDING',
+  )
+}
+
 function CustomerOrders() {
   const navigate = useNavigate()
   const [orders, setOrders] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [isWaitingForPayment, setIsWaitingForPayment] = useState(false)
 
   useEffect(() => {
     const token = tokenStorage.access
     if (!token) {
       navigate('/auth', { state: { from: '/orders' } })
-      return
+      return undefined
     }
 
-    api
-      .get('/api/orders')
-      .then((res) => {
-        // 後端的 response_model 是 list[OrderResponse]，直接回陣列而非
-        // { orders: [...] }。原本只讀 res.data.orders，永遠拿到 undefined，
-        // 結果是「請求成功但訂單列表一直是空的」——不會報錯，最難發現的那種。
-        setOrders(asList(res.data))
-      })
-      .catch(() => {
-        setError('無法取得訂單紀錄，請稍後再試')
-      })
-      .finally(() => {
-        setIsLoading(false)
-      })
+    let attempts = 0
+    let timer
+
+    const fetchOrders = () =>
+      api
+        .get('/api/orders')
+        .then((res) => {
+          // 後端的 response_model 是 list[OrderResponse]，直接回陣列而非
+          // { orders: [...] }。原本只讀 res.data.orders，永遠拿到 undefined，
+          // 結果是「請求成功但訂單列表一直是空的」——不會報錯，最難發現的那種。
+          const next = asList(res.data)
+          setOrders(next)
+
+          const stillWaiting = hasPendingOnlinePayment(next) && attempts < POLL_MAX_ATTEMPTS
+          setIsWaitingForPayment(stillWaiting)
+
+          if (stillWaiting) {
+            attempts += 1
+            timer = setTimeout(fetchOrders, POLL_INTERVAL_MS)
+          }
+        })
+        .catch(() => {
+          // 輪詢途中失敗就停下來，不要把畫面上已經顯示的訂單換成錯誤訊息
+          setIsWaitingForPayment(false)
+          if (attempts === 0) setError('無法取得訂單紀錄，請稍後再試')
+        })
+        .finally(() => {
+          setIsLoading(false)
+        })
+
+    fetchOrders()
+
+    return () => clearTimeout(timer)
   }, [navigate])
 
   return (
@@ -82,6 +121,12 @@ function CustomerOrders() {
         )}
 
         {error && <p className="py-12 text-center text-red-500">{error}</p>}
+
+        {isWaitingForPayment && (
+          <p className="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm text-amber-700">
+            正在確認付款結果，這可能需要幾十秒，請稍候（本頁會自動更新）
+          </p>
+        )}
 
         {!isLoading && !error && orders.length === 0 && (
           <p className="py-12 text-center text-gray-400">目前沒有任何訂單紀錄</p>

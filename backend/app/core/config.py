@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     ECPAY_HASH_IV: str = "v77hoKGq4kWxNNIS"
     ECPAY_RETURN_URL: str = ""
 
+    # 付款完成後讓綠界的結果頁顯示「返回商店」按鈕，並指回前端的訂單頁。
+    # 少了它，使用者付完款會停在綠界的頁面上，得自己想辦法回來。
+    # 留空則不送這個參數（本機開發與測試不需要）。
+    ECPAY_CLIENT_BACK_URL: str = ""
+
     # --- 限流 ---
     RATE_LIMIT_ENABLED: bool = True
 

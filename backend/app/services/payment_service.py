@@ -61,6 +61,12 @@ async def build_checkout_params(
         # 不要從 MerchantTradeNo 反推——id 與 timestamp 之間沒有分隔符，解析會有歧義。
         "CustomField1": str(order.id),
     }
+
+    # ClientBackURL 只在有設定時才送。空字串會被綠界視為無效參數，
+    # 而且它會參與 CheckMacValue 的計算，不能用空值佔位。
+    if settings.ECPAY_CLIENT_BACK_URL:
+        params["ClientBackURL"] = settings.ECPAY_CLIENT_BACK_URL
+
     params["CheckMacValue"] = generate_check_mac_value(params)
     return params
 
