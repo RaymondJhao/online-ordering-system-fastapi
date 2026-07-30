@@ -81,9 +81,18 @@ class Settings(BaseSettings):
     CORS_ORIGIN_REGEX: str = ""
 
     # --- 綠界 ECPay ---
-    ECPAY_MERCHANT_ID: str = "2000132"
-    ECPAY_HASH_KEY: str = "5294y06JbISpM5x9"
-    ECPAY_HASH_IV: str = "v77hoKGq4kWxNNIS"
+    # 綠界官方文件〈測試介接資訊〉現行公布的測試特店資料。
+    # https://developers.ecpay.com.tw/2856/
+    #
+    # 原本用的是 2000132 / 5294y06JbISpM5x9 / v77hoKGq4kWxNNIS——那組出現在
+    # 大量舊教學裡，但**已不在綠界現行的官方測試資料中**，也沒有對應的後台
+    # 登入帳號，因此無法用「模擬付款」驗證 ReturnURL，出問題時查不到通知記錄。
+    #
+    # 3002607 這組同時附有後台帳號（stagetest3 / test1234），而且官方文件的
+    # CheckMacValue 範例就是用它的金鑰計算的——與文件一致的東西才好驗證。
+    ECPAY_MERCHANT_ID: str = "3002607"
+    ECPAY_HASH_KEY: str = "pwFHCqoQZGmho4w6"
+    ECPAY_HASH_IV: str = "EkRm7iFT261dpevs"
     ECPAY_RETURN_URL: str = ""
 
     # 付款完成後讓綠界的結果頁顯示「返回商店」按鈕，並指回前端的訂單頁。

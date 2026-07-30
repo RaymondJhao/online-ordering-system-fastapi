@@ -124,6 +124,13 @@ async def handle_callback(db: AsyncSession, form_data: dict[str, str]) -> bool:
         )
         return False
 
+    # SimulatePaid=1 代表這是從綠界後台按「模擬付款」發出的通知，不是真實付款。
+    # 官方文件明確要求此時**不可**變更訂單狀態，否則會造成損失。
+    # 它的用途是驗證 ReturnURL 收不收得到通知，因此仍要正常回 1|OK。
+    if data.get("SimulatePaid") == "1":
+        logger.info("綠界模擬付款通知（SimulatePaid=1），僅確認可達性，不變更訂單狀態")
+        return True
+
     if data.get("RtnCode") != "1":
         # 付款失敗的通知也要回 1|OK，否則綠界會持續重送
         logger.info(

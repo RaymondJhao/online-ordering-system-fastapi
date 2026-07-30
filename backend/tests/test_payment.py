@@ -91,7 +91,7 @@ async def test_現金訂單不能建立線上付款(
 
 def _signed_callback(order_id: int, rtn_code: str = "1") -> dict[str, str]:
     data = {
-        "MerchantID": "2000132",
+        "MerchantID": "3002607",
         "MerchantTradeNo": f"ORD{order_id}999",
         "RtnCode": rtn_code,
         "RtnMsg": "Succeeded" if rtn_code == "1" else "Failed",
@@ -187,7 +187,7 @@ async def test_重複送達的回調具冪等性(
 
 def test_CheckMacValue_對內容變動敏感() -> None:
     """簽章必須隨任何欄位變動而改變，否則就攔不住竄改。"""
-    base = {"MerchantID": "2000132", "RtnCode": "1", "TradeAmt": "120"}
+    base = {"MerchantID": "3002607", "RtnCode": "1", "TradeAmt": "120"}
     changed = {**base, "TradeAmt": "1"}
 
     assert generate_check_mac_value(base) != generate_check_mac_value(changed)
