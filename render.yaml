@@ -38,6 +38,9 @@ services:
     plan: free
     region: singapore
     rootDir: backend
+    # 明確指定分支。Render 的文件把 branch 的預設值標為 master，實際行為則是
+    # 取 repo 的預設分支——寫死可以省掉「到底用哪個」的不確定性。
+    branch: main
 
     # 指向 liveness 而非 readiness。若健康檢查在資料庫不通時回 503，
     # Render 會判定實例不健康並反覆重啟——而免費方案的資料庫每 30 天
